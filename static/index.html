@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Profiler</title>
+  <link rel="stylesheet" href="/static/styles.css?v=reconstruction-v3" />
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">AI</div>
+      <div>
+        <strong>AI Profiler</strong>
+        <span>Карта данных и вызовов</span>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Main navigation">
+      <button class="nav-item" data-view="briefing" type="button">Для созвона</button>
+      <button class="nav-item" data-view="overview" type="button">Обзор</button>
+      <button class="nav-item" data-view="reconstruction" type="button">Сверка с Excel</button>
+      <button class="nav-item" data-view="sequence" type="button">Сиквенс вызовов</button>
+      <button class="nav-item" data-view="path" type="button">Путь потока</button>
+      <button class="nav-item" data-view="mappings" type="button">Маппинги</button>
+      <button class="nav-item" data-view="models" type="button">Модели</button>
+      <button class="nav-item" data-view="fields" type="button">Поля</button>
+      <button class="nav-item" data-view="gaps" type="button">Качество</button>
+    </nav>
+    <div class="demo-context" aria-label="Демонстрационный срез">
+      <span>ДЕМО</span>
+      <strong>P31 · 3 ФП</strong>
+      <small>51 сервис · строгий показ</small>
+    </div>
+    <div class="rail-snapshot">
+      <label class="snapshot-picker rail-picker">
+        <span>Срез</span>
+        <select id="snapshot-select"></select>
+      </label>
+      <button class="ghost-btn rail-refresh" id="refresh-btn" type="button">Обновить</button>
+    </div>
+    <div class="rail-foot">
+      <span class="dot"></span>
+      <span id="api-state">подключение</span>
+    </div>
+  </aside>
+
+  <main class="shell">
+    <section class="view" id="view-briefing">
+      <div class="panel" id="briefing-panel"></div>
+    </section>
+
+    <section class="view" id="view-overview">
+      <div class="panel" id="overview-panel"></div>
+    </section>
+
+    <section class="view" id="view-reconstruction">
+      <div class="panel reconstruction-panel">
+        <div class="reconstruction-toolbar">
+          <div>
+            <h2>Бизнес-процесс и реализация</h2>
+            <p id="reconstruction-summary">Загрузка...</p>
+          </div>
+          <div class="reconstruction-actions">
+            <label class="snapshot-picker reconstruction-picker">
+              <span>Область реестра</span>
+              <select id="reconstruction-process"></select>
+            </label>
+            <div class="diagram-mode-switch" role="group" aria-label="Слой процесса">
+              <button class="diagram-mode" id="reconstruction-mode-business" type="button">Бизнес-процесс</button>
+              <button class="diagram-mode" id="reconstruction-mode-implementation" type="button">Реализация</button>
+              <button class="diagram-mode active" id="reconstruction-mode-compare" type="button">Сравнение</button>
+            </div>
+            <div class="reconstruction-export-actions">
+              <button class="mini-btn" id="reconstruction-export-html" type="button">HTML</button>
+              <button class="mini-btn" id="reconstruction-export-package" type="button">ZIP + Excel</button>
+            </div>
+          </div>
+        </div>
+        <div class="reconstruction-metrics" id="reconstruction-metrics"></div>
+        <div class="reconstruction-layout">
+          <div class="reconstruction-board" id="reconstruction-board"></div>
+          <aside class="reconstruction-detail" id="reconstruction-detail"></aside>
+        </div>
+        <section class="reconstruction-ai-queue" id="reconstruction-ai-queue"></section>
+      </div>
+    </section>
+
+    <section class="view" id="view-sequence">
+      <div class="panel sequence-panel">
+        <div class="sequence-toolbar">
+          <div>
+            <h2 id="sequence-title">Сиквенс межсервисных вызовов</h2>
+            <p id="sequence-summary">Загрузка...</p>
+          </div>
+          <div class="sequence-actions">
+            <div class="diagram-mode-switch" role="group" aria-label="Представление процесса">
+              <button class="diagram-mode active" id="diagram-mode-sequence" type="button">Сиквенс</button>
+              <button class="diagram-mode" id="diagram-mode-process" type="button">Карта процесса</button>
+            </div>
+            <button class="mini-btn agent-trigger" id="seq-agent" type="button" title="Задать вопрос по фактам выбранного процесса">ИИ-ассистент</button>
+            <select id="sequence-scope" class="scope-select demo-hide" aria-label="Контур анализа">
+              <option value="all">Все найденные связи</option>
+              <option value="cross">Только межФП</option>
+            </select>
+            <input id="sequence-filter" class="filter-input demo-hide" placeholder="Фильтр: сервис, модель или поле..." />
+            <label class="check-toggle demo-hide">
+              <input id="sequence-confident-only" type="checkbox" checked />
+              только уверенные
+            </label>
+            <label class="check-toggle demo-hide" id="sequence-complete-toggle">
+              <input id="sequence-complete-only" type="checkbox" />
+              только без внутренних разрывов
+            </label>
+            <button class="mini-btn" id="seq-focus" type="button" title="Скрыть хедер — диаграмма на всё окно">⛶ Весь экран</button>
+            <button class="mini-btn" id="seq-fit" type="button">Вписать</button>
+            <button class="mini-btn" id="seq-zoom-out" type="button">−</button>
+            <button class="mini-btn" id="seq-zoom-in" type="button">+</button>
+            <span class="zoom-pill" id="seq-zoom-label">100%</span>
+            <details class="export-menu demo-hide">
+              <summary>Экспорт</summary>
+              <div class="export-menu-list">
+                <button class="mini-btn" id="seq-export-html" type="button" title="Автономный интерактивный отчёт со схемой, полями и доказательствами">HTML</button>
+                <button class="mini-btn" id="seq-export-package" type="button" title="ZIP: автономный HTML и связанные Excel/CSV маппинги">ZIP + Excel</button>
+                <button class="mini-btn" id="seq-export-svg" type="button">SVG</button>
+                <button class="mini-btn" id="seq-export-png" type="button">PNG</button>
+                <button class="mini-btn" id="seq-export-json" type="button">JSON</button>
+                <button class="mini-btn" id="seq-export-puml" type="button" title="PlantUML sequence/activity (.puml)">PlantUML</button>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="sequence-quality" id="sequence-quality"></div>
+        <div class="sequence-layout">
+          <div class="sequence-canvas" id="sequence-canvas" aria-label="Sequence diagram"></div>
+          <aside class="sequence-detail sequence-inspector" id="sequence-inspector">
+            <div class="inspector-tabs" role="tablist" aria-label="Инспектор процесса">
+              <button class="inspector-tab active" id="inspector-tab-detail" type="button" role="tab" aria-selected="true">Детали</button>
+              <button class="inspector-tab" id="inspector-tab-agent" type="button" role="tab" aria-selected="false">ИИ по процессу</button>
+              <button class="inspector-collapse" id="inspector-collapse" type="button" title="Свернуть инспектор" aria-label="Свернуть инспектор">›</button>
+            </div>
+            <div class="sequence-detail-content" id="sequence-detail"></div>
+            <section class="process-agent" id="process-agent" hidden>
+              <header>
+                <span class="agent-mark">AI</span>
+                <div><b>Ассистент по lineage</b><small id="agent-context">Выберите процесс или связь</small></div>
+              </header>
+              <div class="agent-mode" role="group" aria-label="Режим ответа">
+                <button class="active" type="button" data-agent-mode="facts">По фактам</button>
+                <button type="button" data-agent-mode="llm">GigaChat</button>
+              </div>
+              <div class="agent-quick" aria-label="Быстрые вопросы">
+                <button type="button" data-agent-question="Что делает этот процесс и где его границы?">Что делает процесс?</button>
+                <button type="button" data-agent-question="Почему выбранный переход находится в этом месте процесса?">Почему этот переход?</button>
+                <button type="button" data-agent-question="Какие модели и поля передаются в выбранном процессе?">Какие поля идут?</button>
+                <button type="button" data-agent-question="Какие разрывы и недоказанные места остались в этом процессе?">Где пробелы?</button>
+              </div>
+              <div class="agent-conversation" id="agent-conversation">
+                <div class="agent-empty">Ответ строится только по выбранному снимку. GigaChat формулирует текст, но не добавляет факты без ссылок.</div>
+              </div>
+              <form class="agent-form" id="agent-form">
+                <textarea id="agent-question" rows="3" placeholder="Например: куда используется ответ этого HTTP-вызова?"></textarea>
+                <button type="submit" id="agent-submit">Спросить</button>
+              </form>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-path">
+      <div class="panel path-panel">
+        <div class="sequence-toolbar">
+          <div>
+            <h2>Путь потока между сервисами</h2>
+            <p id="path-summary">Загрузка...</p>
+          </div>
+          <div class="sequence-actions">
+            <label class="snapshot-picker path-picker">
+              <span>Откуда</span>
+              <select id="path-from"></select>
+            </label>
+            <button class="mini-btn" id="path-swap" type="button" title="Поменять направление">⇄</button>
+            <label class="snapshot-picker path-picker">
+              <span>Куда</span>
+              <select id="path-to"></select>
+            </label>
+            <label class="check-toggle">
+              <input id="path-confident-only" type="checkbox" />
+              только уверенные
+            </label>
+          </div>
+        </div>
+        <div class="path-layout">
+          <div class="path-canvas" id="path-canvas"></div>
+          <aside class="path-side" id="path-side"></aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-mappings">
+      <div class="panel mappings-panel">
+        <div class="mapping-toolbar">
+          <div>
+            <h2>Excel-маппинги контрактов</h2>
+            <p id="mapping-summary">Загрузка...</p>
+          </div>
+          <div class="sequence-actions">
+            <input id="mapping-filter" class="filter-input demo-hide" placeholder="Фильтр: сервис, модель или поле..." />
+            <label class="check-toggle demo-hide">
+              <input id="mapping-confident-only" type="checkbox" checked />
+              только уверенные
+            </label>
+          </div>
+        </div>
+        <div class="mapping-layout">
+          <div class="mapping-table-wrap">
+            <table class="table mapping-table" id="mapping-table"></table>
+          </div>
+          <aside class="mapping-detail" id="mapping-detail"></aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-models">
+      <div class="panel" id="models-panel"></div>
+    </section>
+
+    <section class="view" id="view-fields">
+      <div class="panel" id="fields-panel"></div>
+    </section>
+
+    <section class="view" id="view-gaps">
+      <div class="panel" id="gaps-panel"></div>
+    </section>
+  </main>
+
+  <script src="/static/sequence.js?v=process-ir-1"></script>
+  <script src="/static/process_map.js?v=process-map-1"></script>
+  <script src="/static/process_map_export.js?v=process-map-export-1"></script>
+  <script src="/static/sequence_export.js?v=viewer-2"></script>
+  <script src="/static/reconstruction_export.js?v=reconstruction-export-1"></script>
+  <script src="/static/app.js?v=reconstruction-v5"></script>
+</body>
+</html>

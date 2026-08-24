@@ -1,0 +1,11 @@
+{
+  "name": "ai-profiler-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Unified lineage UI for AI Profiler",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --watch run server.ts",
+    "check": "bun build server.ts --target=bun --outdir=.bun-check/server && bun build static/app.js --target=browser --outdir=.bun-check/browser"
+  }
+}
