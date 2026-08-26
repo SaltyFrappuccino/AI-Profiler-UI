@@ -1,7 +1,8 @@
 import { resolve, sep } from "node:path";
+import { api } from "./api";
+import { closeDatabase } from "./db/database";
 
 const port = Number.parseInt(Bun.env.UI_PORT || "8093", 10);
-const apiBase = new URL(Bun.env.AI_PROFILER_API_URL || "http://127.0.0.1:8092");
 const staticRoot = resolve(import.meta.dir, "static");
 
 const contentTypes: Record<string, string> = {
@@ -29,34 +30,13 @@ function staticFile(pathname: string): Response {
   });
 }
 
-async function proxy(request: Request, url: URL): Promise<Response> {
-  const target = new URL(`${url.pathname}${url.search}`, apiBase);
-  const headers = new Headers(request.headers);
-  headers.delete("host");
-  const upstream = await fetch(target, {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-    redirect: "manual",
-  });
-  const responseHeaders = new Headers(upstream.headers);
-  responseHeaders.delete("content-encoding");
-  responseHeaders.delete("content-length");
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders,
-  });
-}
-
 const server = Bun.serve({
-  hostname: "127.0.0.1",
+  hostname: Bun.env.UI_HOST || "127.0.0.1",
   port,
   async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/") || url.pathname === "/file") {
-      return proxy(request, url);
-    }
+    const apiResponse = await api(request, url);
+    if (apiResponse) return apiResponse;
     if (url.pathname.startsWith("/static/")) {
       return staticFile(url.pathname);
     }
@@ -73,4 +53,9 @@ const server = Bun.serve({
 });
 
 console.log(`AI Profiler UI: http://${server.hostname}:${server.port}/app/`);
-console.log(`API backend: ${apiBase.href}`);
+console.log("Storage backend: PostgreSQL");
+
+process.on("SIGINT", async () => {
+  await closeDatabase();
+  process.exit(0);
+});

@@ -431,7 +431,9 @@ function setView(view) {
 }
 
 function fileUrl(path) {
-  return path ? `/file?path=${encodeURIComponent(path)}` : "";
+  if (!path) return "";
+  const value = String(path);
+  return value.startsWith("/") ? value : `/file?path=${encodeURIComponent(value)}`;
 }
 
 function mappingViewUrl(contractId) {
