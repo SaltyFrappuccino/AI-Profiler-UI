@@ -93,6 +93,16 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
   "'": "&#39;",
 }[ch]));
 const fmt = (value) => Number(value || 0).toLocaleString("ru-RU");
+const formatBytes = (value) => {
+  let size = Number(value || 0);
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+};
 const pluralRu = (value, one, few, many) => {
   const count = Math.abs(Number(value || 0)) % 100;
   const last = count % 10;
@@ -387,7 +397,7 @@ function setView(view) {
     loadSnapshot(state.snapshot.id).catch(showError);
     return;
   }
-  const apiViews = new Set(["briefing", "reconstruction", "mappings", "models", "fields", "gaps"]);
+  const apiViews = new Set(["briefing", "reconstruction", "mappings", "models", "fields", "gaps", "architecture"]);
   if (state.snapshot && apiViews.has(view) && !state.loadedViews.has(view)) {
     state.view = view;
     $("api-state").textContent = "loading";
@@ -418,6 +428,7 @@ function setView(view) {
     models: ["Модели данных", "DTO, JSON/OpenAPI/DataSurf/AI identity graph и payload-типы."],
     fields: ["Пополевые связи", "Контрактные поля между сервисами и уровень доказательства."],
     gaps: ["Качество и разрывы", "Готовность среза, weak links, конфликты схем/DataSurf/code."],
+    architecture: ["Архитектура данных", "Физическая модель PostgreSQL, состав загруженного среза и контроль целостности."],
   };
   const titleEl = $("view-title");
   if (titleEl) titleEl.textContent = titles[view]?.[0] || titles.sequence[0];
@@ -4382,6 +4393,131 @@ function renderReconstructionView() {
   renderReconstructionAiQueue(process);
 }
 
+function renderArchitectureView() {
+  const root = $("architecture-panel");
+  const data = state.graph || {};
+  const snapshot = data.snapshot || {};
+  const runtime = data.runtime || {};
+  const counts = data.counts || {};
+  const integrity = data.integrity || {};
+  const layers = data.storageModel?.layers || [];
+  const relationships = data.storageModel?.relationships || [];
+  const tableSizes = Object.fromEntries((data.tables || []).map((item) => [item.table_name, Number(item.total_bytes || 0)]));
+  const tableLabels = {
+    snapshots: "Снимки анализа",
+    report_imports: "Журнал загрузок",
+    source_groups: "Контуры ФП",
+    services: "Сервисы",
+    models: "Модели данных",
+    model_fields: "Поля моделей",
+    model_identity_nodes: "Идентичности моделей",
+    model_identity_edges: "Связи идентичности",
+    contracts: "Контракты",
+    field_links: "Связи полей",
+    processes: "Процессы",
+    process_steps: "Шаги процессов",
+    process_relations: "Причинные связи",
+    evidence_refs: "Ссылки на доказательства",
+    artifacts: "Excel и другие артефакты",
+  };
+  const latestMigration = (data.migrations || []).at(-1)?.version || "—";
+  root.innerHTML = `
+    <header class="storage-head">
+      <div>
+        <span class="storage-kicker">PostgreSQL ${esc(String(runtime.server_version || "").split(" ")[0])}</span>
+        <h2>Хранилище графа анализа</h2>
+        <p>Исходный снимок сохраняется целиком, а рабочие сущности раскладываются по предметным таблицам. UI и внешние агенты читают одну версию данных через Bun API.</p>
+      </div>
+      <dl>
+        <div><dt>База</dt><dd>${esc(runtime.database_name || "—")}</dd></div>
+        <div><dt>Схема</dt><dd>ai_profiler</dd></div>
+        <div><dt>Миграция</dt><dd>${esc(latestMigration)}</dd></div>
+        <div><dt>Снимок</dt><dd>${esc(snapshot.name || snapshot.snapshot_id || "—")}</dd></div>
+      </dl>
+    </header>
+
+    <div class="storage-metrics">
+      <article><strong>${fmt(counts.services)}</strong><span>сервисов</span></article>
+      <article><strong>${fmt(counts.models)}</strong><span>моделей</span></article>
+      <article><strong>${fmt(counts.model_fields)}</strong><span>полей моделей</span></article>
+      <article><strong>${fmt(counts.contracts)}</strong><span>контрактов</span></article>
+      <article><strong>${fmt(counts.process_steps)}</strong><span>шагов процессов</span></article>
+      <article><strong>${fmt(counts.field_links)}</strong><span>связей полей</span></article>
+      <article><strong>${fmt(counts.evidence_refs)}</strong><span>ссылок на доказательства</span></article>
+      <article><strong>${formatBytes(runtime.database_bytes)}</strong><span>размер базы</span></article>
+    </div>
+
+    <section class="storage-section">
+      <div class="storage-section-head">
+        <div><span>Поток поставки</span><h3>От отчёта до интерфейса</h3></div>
+        <p>Загрузка выполняется отдельно от UI. Снимок и его индексы обновляются одной транзакцией.</p>
+      </div>
+      <div class="storage-pipeline">
+        <article><b>01</b><strong>Отчёт профайлера</strong><span>system_lineage.json и Excel-маппинги</span></article>
+        <i>→</i>
+        <article><b>02</b><strong>Report Loader</strong><span>SHA-256, миграции и проверка структуры</span></article>
+        <i>→</i>
+        <article><b>03</b><strong>PostgreSQL</strong><span>JSONB-снимок и нормализованный граф</span></article>
+        <i>→</i>
+        <article><b>04</b><strong>Bun API</strong><span>Read-only выборки и рекурсивные маршруты</span></article>
+        <i>→</i>
+        <article><b>05</b><strong>UI и агенты</strong><span>Одна модель доступа без чтения файлов</span></article>
+      </div>
+    </section>
+
+    <section class="storage-section">
+      <div class="storage-section-head">
+        <div><span>Физическая модель</span><h3>Четыре слоя хранения</h3></div>
+        <p>JSONB оставляет полную трассируемость исходного отчёта. Реляционные таблицы отвечают за фильтрацию, обходы и контроль связности.</p>
+      </div>
+      <div class="storage-layers">
+        ${layers.map((layer, index) => `
+          <article>
+            <header><b>0${index + 1}</b><strong>${esc(layer.title)}</strong></header>
+            <div>${(layer.tables || []).map((table) => `
+              <span><i>${esc(tableLabels[table] || table)}</i><b>${fmt(counts[table])}</b><small>${formatBytes(tableSizes[table])}</small></span>
+            `).join("")}</div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+
+    <section class="storage-section storage-graph-section">
+      <div class="storage-section-head">
+        <div><span>Связность</span><h3>Основные отношения</h3></div>
+        <p>Внешние ключи удерживают снимок, каталог и lineage в одной версии. Составные ключи не позволяют смешивать сущности разных прогонов.</p>
+      </div>
+      <div class="storage-relations">
+        ${relationships.map(([source, target, cardinality]) => `
+          <article><span>${esc(tableLabels[source] || source)}</span><b>${esc(cardinality)}</b><span>${esc(tableLabels[target] || target)}</span></article>
+        `).join("")}
+      </div>
+    </section>
+
+    <section class="storage-section storage-operations">
+      <div class="storage-section-head">
+        <div><span>Эксплуатация</span><h3>Целостность и воспроизводимость</h3></div>
+        <p>Снимок идентифицируется хешем исходного отчёта. Повторная загрузка не создаёт дубликаты сущностей и сохраняется в журнале поставок.</p>
+      </div>
+      <div class="storage-integrity">
+        <article><strong>${fmt(integrity.primary_keys)}</strong><span>первичных ключей</span></article>
+        <article><strong>${fmt(integrity.foreign_keys)}</strong><span>внешних ключей</span></article>
+        <article><strong>${fmt(integrity.indexes)}</strong><span>индексов</span></article>
+        <article><strong>${fmt(counts.report_imports)}</strong><span>загрузок снимка</span></article>
+        <article><strong>${formatBytes(snapshot.document_bytes)}</strong><span>исходный JSONB</span></article>
+        <article><strong>${fmt(counts.artifacts)}</strong><span>зарегистрированных файлов</span></article>
+      </div>
+      <div class="storage-provenance">
+        <dl>
+          <div><dt>Snapshot ID</dt><dd>${esc(snapshot.snapshot_id || "—")}</dd></div>
+          <div><dt>SHA-256</dt><dd>${esc(snapshot.source_hash || "—")}</dd></div>
+          <div><dt>Импорт</dt><dd>${esc(data.latestImport?.imported_at ? new Date(data.latestImport.imported_at).toLocaleString("ru-RU") : "—")}</dd></div>
+          <div><dt>Источник</dt><dd>${esc(snapshot.source_file || "—")}</dd></div>
+        </dl>
+      </div>
+    </section>`;
+}
+
 function renderCurrentView() {
   renderMetrics();
   if (state.view === "briefing") renderBriefing();
@@ -4393,6 +4529,7 @@ function renderCurrentView() {
   if (state.view === "models") renderModelsView();
   if (state.view === "fields") renderFieldsView();
   if (state.view === "gaps") renderGapsView();
+  if (state.view === "architecture") renderArchitectureView();
 }
 
 async function loadSnapshots() {
