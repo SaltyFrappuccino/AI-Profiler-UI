@@ -4151,6 +4151,17 @@ function renderReconstructionAiQueue(process) {
     return;
   }
   const queue = state.reconstruction.aiQueue || { summary: {}, tasks: [] };
+  if (queue.unavailable) {
+    panel.innerHTML = `
+      <div class="reconstruction-ai-head">
+        <div>
+          <h3>AI-проверка разрывов</h3>
+          <p>Для запуска проверяющего агента подключите backend AI Profiler. Просмотр отчёта и доказательств доступен без него.</p>
+        </div>
+        <span class="badge warn">backend не подключён</span>
+      </div>`;
+    return;
+  }
   const summary = queue.summary || {};
   const tasks = queue.tasks || [];
   const queuedTasks = tasks.filter((task) => task.researchable && ["queued", "retryable_error"].includes(task.queueStatus));
@@ -4215,7 +4226,8 @@ async function loadReconstructionAiQueue(processId) {
     state.reconstruction.aiQueueProcessId = processId;
     state.reconstruction.aiQueue = queue;
   } catch (error) {
-    showError(error);
+    state.reconstruction.aiQueueProcessId = processId;
+    state.reconstruction.aiQueue = { summary: {}, tasks: [], unavailable: true, message: error?.message || String(error) };
   } finally {
     state.reconstruction.aiQueueLoading = false;
     if (state.reconstruction.processId === processId) renderReconstructionView();
@@ -4421,101 +4433,139 @@ function renderArchitectureView() {
     artifacts: "Excel и другие артефакты",
   };
   const latestMigration = (data.migrations || []).at(-1)?.version || "—";
+  const tableRows = layers.flatMap((layer, layerIndex) => (layer.tables || []).map((table) => ({
+    layer: layer.title,
+    layerIndex,
+    table,
+    count: counts[table],
+    bytes: tableSizes[table],
+  })));
   root.innerHTML = `
-    <header class="storage-head">
-      <div>
-        <span class="storage-kicker">PostgreSQL ${esc(String(runtime.server_version || "").split(" ")[0])}</span>
-        <h2>Хранилище графа анализа</h2>
-        <p>Исходный снимок сохраняется целиком, а рабочие сущности раскладываются по предметным таблицам. UI и внешние агенты читают одну версию данных через Bun API.</p>
+    <header class="storage-console-head">
+      <div class="storage-console-title">
+        <div class="storage-breadcrumb"><span>Платформа данных</span><b>/</b><span>Архитектура</span></div>
+        <h2>Модель хранения lineage</h2>
+        <p>Версионированный снимок, нормализованный граф и доказательства анализа в едином контуре данных.</p>
       </div>
-      <dl>
-        <div><dt>База</dt><dd>${esc(runtime.database_name || "—")}</dd></div>
-        <div><dt>Схема</dt><dd>ai_profiler</dd></div>
-        <div><dt>Миграция</dt><dd>${esc(latestMigration)}</dd></div>
-        <div><dt>Снимок</dt><dd>${esc(snapshot.name || snapshot.snapshot_id || "—")}</dd></div>
-      </dl>
+      <div class="storage-runtime">
+        <span class="storage-live"><i></i>Подключено</span>
+        <div><small>PostgreSQL</small><b>${esc(String(runtime.server_version || "").split(" ")[0] || "—")}</b></div>
+        <div><small>База</small><b>${esc(runtime.database_name || "—")}</b></div>
+        <div><small>Схема</small><b>ai_profiler</b></div>
+      </div>
     </header>
 
-    <div class="storage-metrics">
-      <article><strong>${fmt(counts.services)}</strong><span>сервисов</span></article>
-      <article><strong>${fmt(counts.models)}</strong><span>моделей</span></article>
-      <article><strong>${fmt(counts.model_fields)}</strong><span>полей моделей</span></article>
-      <article><strong>${fmt(counts.contracts)}</strong><span>контрактов</span></article>
-      <article><strong>${fmt(counts.process_steps)}</strong><span>шагов процессов</span></article>
-      <article><strong>${fmt(counts.field_links)}</strong><span>связей полей</span></article>
-      <article><strong>${fmt(counts.evidence_refs)}</strong><span>ссылок на доказательства</span></article>
-      <article><strong>${formatBytes(runtime.database_bytes)}</strong><span>размер базы</span></article>
+    <div class="storage-statline">
+      <div><span>Сервисы</span><strong>${fmt(counts.services)}</strong></div>
+      <div><span>Модели</span><strong>${fmt(counts.models)}</strong></div>
+      <div><span>Поля моделей</span><strong>${fmt(counts.model_fields)}</strong></div>
+      <div><span>Контракты</span><strong>${fmt(counts.contracts)}</strong></div>
+      <div><span>Шаги процессов</span><strong>${fmt(counts.process_steps)}</strong></div>
+      <div><span>Доказательства</span><strong>${fmt(counts.evidence_refs)}</strong></div>
     </div>
 
-    <section class="storage-section">
-      <div class="storage-section-head">
-        <div><span>Поток поставки</span><h3>От отчёта до интерфейса</h3></div>
-        <p>Загрузка выполняется отдельно от UI. Снимок и его индексы обновляются одной транзакцией.</p>
-      </div>
-      <div class="storage-pipeline">
-        <article><b>01</b><strong>Отчёт профайлера</strong><span>system_lineage.json и Excel-маппинги</span></article>
-        <i>→</i>
-        <article><b>02</b><strong>Report Loader</strong><span>SHA-256, миграции и проверка структуры</span></article>
-        <i>→</i>
-        <article><b>03</b><strong>PostgreSQL</strong><span>JSONB-снимок и нормализованный граф</span></article>
-        <i>→</i>
-        <article><b>04</b><strong>Bun API</strong><span>Read-only выборки и рекурсивные маршруты</span></article>
-        <i>→</i>
-        <article><b>05</b><strong>UI и агенты</strong><span>Одна модель доступа без чтения файлов</span></article>
-      </div>
-    </section>
+    <div class="storage-workbench">
+      <div class="storage-primary">
+        <section class="storage-block storage-architecture-map">
+          <header class="storage-block-head">
+            <div><span>Контур данных</span><h3>Поставка и чтение снимка</h3></div>
+            <p>Загрузка и публикация разделены. UI не читает файлы отчёта напрямую.</p>
+          </header>
+          <div class="storage-flow">
+            <div class="storage-endpoint source">
+              <small>Источник</small>
+              <strong>Отчёт профайлера</strong>
+              <span>JSON + Excel</span>
+            </div>
+            <div class="storage-flow-link"><b>01</b><span>Загрузка</span></div>
+            <div class="storage-loader">
+              <small>Ingestion</small>
+              <strong>Report Loader</strong>
+              <span>SHA-256 · проверка · транзакция</span>
+            </div>
+            <div class="storage-flow-link"><b>02</b><span>Commit</span></div>
+            <div class="storage-database">
+              <header><div><small>PostgreSQL</small><strong>${formatBytes(runtime.database_bytes)}</strong></div><span>${esc(snapshot.name || snapshot.snapshot_id || "—")}</span></header>
+              <div class="storage-domains">
+                ${layers.map((layer, index) => `
+                  <div class="storage-domain domain-${index + 1}">
+                    <b>${esc(layer.title)}</b>
+                    <span>${fmt((layer.tables || []).length)} таблиц · ${fmt((layer.tables || []).reduce((total, table) => total + Number(counts[table] || 0), 0))} записей</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+            <div class="storage-flow-link"><b>03</b><span>Read-only</span></div>
+            <div class="storage-endpoint target">
+              <small>Доступ</small>
+              <strong>Bun API</strong>
+              <span>UI · агенты · экспорт</span>
+            </div>
+          </div>
+        </section>
 
-    <section class="storage-section">
-      <div class="storage-section-head">
-        <div><span>Физическая модель</span><h3>Четыре слоя хранения</h3></div>
-        <p>JSONB оставляет полную трассируемость исходного отчёта. Реляционные таблицы отвечают за фильтрацию, обходы и контроль связности.</p>
+        <section class="storage-block storage-inventory">
+          <header class="storage-block-head">
+            <div><span>Физическая модель</span><h3>Таблицы и объём данных</h3></div>
+            <p>${fmt(tableRows.length)} предметных таблиц в четырёх слоях хранения.</p>
+          </header>
+          <div class="storage-table-wrap">
+            <table class="storage-table">
+              <thead><tr><th>Слой</th><th>Таблица</th><th>Назначение</th><th>Записей</th><th>Размер</th></tr></thead>
+              <tbody>${tableRows.map((row) => `
+                <tr>
+                  <td><span class="storage-layer-mark layer-${row.layerIndex + 1}">${String(row.layerIndex + 1).padStart(2, "0")}</span></td>
+                  <td><code>${esc(row.table)}</code></td>
+                  <td>${esc(tableLabels[row.table] || row.table)}</td>
+                  <td>${fmt(row.count)}</td>
+                  <td>${formatBytes(row.bytes)}</td>
+                </tr>
+              `).join("")}</tbody>
+            </table>
+          </div>
+        </section>
       </div>
-      <div class="storage-layers">
-        ${layers.map((layer, index) => `
-          <article>
-            <header><b>0${index + 1}</b><strong>${esc(layer.title)}</strong></header>
-            <div>${(layer.tables || []).map((table) => `
-              <span><i>${esc(tableLabels[table] || table)}</i><b>${fmt(counts[table])}</b><small>${formatBytes(tableSizes[table])}</small></span>
-            `).join("")}</div>
-          </article>
-        `).join("")}
-      </div>
-    </section>
 
-    <section class="storage-section storage-graph-section">
-      <div class="storage-section-head">
-        <div><span>Связность</span><h3>Основные отношения</h3></div>
-        <p>Внешние ключи удерживают снимок, каталог и lineage в одной версии. Составные ключи не позволяют смешивать сущности разных прогонов.</p>
-      </div>
-      <div class="storage-relations">
-        ${relationships.map(([source, target, cardinality]) => `
-          <article><span>${esc(tableLabels[source] || source)}</span><b>${esc(cardinality)}</b><span>${esc(tableLabels[target] || target)}</span></article>
-        `).join("")}
-      </div>
-    </section>
+      <aside class="storage-aside">
+        <section class="storage-side-block">
+          <header><span>Состояние</span><b>Рабочий контур</b></header>
+          <dl class="storage-facts">
+            <div><dt>Снимок</dt><dd>${esc(snapshot.name || snapshot.snapshot_id || "—")}</dd></div>
+            <div><dt>Миграция</dt><dd>${esc(latestMigration)}</dd></div>
+            <div><dt>Импорт</dt><dd>${esc(data.latestImport?.imported_at ? new Date(data.latestImport.imported_at).toLocaleString("ru-RU") : "—")}</dd></div>
+            <div><dt>Исходный JSONB</dt><dd>${formatBytes(snapshot.document_bytes)}</dd></div>
+            <div><dt>Артефакты</dt><dd>${fmt(counts.artifacts)}</dd></div>
+          </dl>
+        </section>
 
-    <section class="storage-section storage-operations">
-      <div class="storage-section-head">
-        <div><span>Эксплуатация</span><h3>Целостность и воспроизводимость</h3></div>
-        <p>Снимок идентифицируется хешем исходного отчёта. Повторная загрузка не создаёт дубликаты сущностей и сохраняется в журнале поставок.</p>
-      </div>
-      <div class="storage-integrity">
-        <article><strong>${fmt(integrity.primary_keys)}</strong><span>первичных ключей</span></article>
-        <article><strong>${fmt(integrity.foreign_keys)}</strong><span>внешних ключей</span></article>
-        <article><strong>${fmt(integrity.indexes)}</strong><span>индексов</span></article>
-        <article><strong>${fmt(counts.report_imports)}</strong><span>загрузок снимка</span></article>
-        <article><strong>${formatBytes(snapshot.document_bytes)}</strong><span>исходный JSONB</span></article>
-        <article><strong>${fmt(counts.artifacts)}</strong><span>зарегистрированных файлов</span></article>
-      </div>
-      <div class="storage-provenance">
-        <dl>
-          <div><dt>Snapshot ID</dt><dd>${esc(snapshot.snapshot_id || "—")}</dd></div>
-          <div><dt>SHA-256</dt><dd>${esc(snapshot.source_hash || "—")}</dd></div>
-          <div><dt>Импорт</dt><dd>${esc(data.latestImport?.imported_at ? new Date(data.latestImport.imported_at).toLocaleString("ru-RU") : "—")}</dd></div>
-          <div><dt>Источник</dt><dd>${esc(snapshot.source_file || "—")}</dd></div>
-        </dl>
-      </div>
-    </section>`;
+        <section class="storage-side-block">
+          <header><span>Целостность</span><b>Ограничения БД</b></header>
+          <div class="storage-constraint-grid">
+            <div><strong>${fmt(integrity.primary_keys)}</strong><span>PK</span></div>
+            <div><strong>${fmt(integrity.foreign_keys)}</strong><span>FK</span></div>
+            <div><strong>${fmt(integrity.indexes)}</strong><span>Индексы</span></div>
+            <div><strong>${fmt(counts.report_imports)}</strong><span>Загрузки</span></div>
+          </div>
+          <p>Составные ключи изолируют прогоны. Внешние ключи контролируют каталог, процессы и связи полей.</p>
+        </section>
+
+        <section class="storage-side-block storage-relationships">
+          <header><span>Граф</span><b>Ключевые отношения</b></header>
+          <div>${relationships.map(([source, target, cardinality]) => `
+            <span><i>${esc(tableLabels[source] || source)}</i><b>${esc(cardinality)}</b><i>${esc(tableLabels[target] || target)}</i></span>
+          `).join("")}</div>
+        </section>
+
+        <section class="storage-side-block storage-source">
+          <header><span>Происхождение</span><b>Контрольная сумма</b></header>
+          <dl class="storage-facts">
+            <div><dt>Snapshot ID</dt><dd><code>${esc(snapshot.snapshot_id || "—")}</code></dd></div>
+            <div><dt>SHA-256</dt><dd><code>${esc(snapshot.source_hash || "—")}</code></dd></div>
+            <div><dt>Источник</dt><dd><code>${esc(snapshot.source_file || "—")}</code></dd></div>
+          </dl>
+        </section>
+      </aside>
+    </div>`;
 }
 
 function renderCurrentView() {

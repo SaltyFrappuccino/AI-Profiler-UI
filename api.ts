@@ -340,6 +340,9 @@ export async function api(request: Request, url: URL): Promise<Response | null> 
     }
     const journeysMatch = url.pathname.match(/^\/api\/snapshots\/([^/]+)\/field-journeys$/);
     if (journeysMatch) return fieldJourneys(decodeURIComponent(journeysMatch[1]), url);
+    if (/^\/api\/snapshots\/[^/]+\/reconstruction-ai-queue$/.test(url.pathname)) {
+      return json({ summary: {}, tasks: [], unavailable: true });
+    }
     if (url.pathname.startsWith("/api/")) {
       return message("This endpoint requires the AI Profiler backend and is not available in the UI sandbox", 503);
     }
