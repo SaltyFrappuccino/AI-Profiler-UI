@@ -3867,6 +3867,8 @@ function renderReconstructionDetail(step) {
   }
   const status = reconstructionStatus(step.mappingStatus);
   const coverage = step.evidenceCoverage || {};
+  const quality = step.qualityDiagnostics || {};
+  const continuity = quality.processContinuity || {};
   const sourceRefs = step.sourceRefs || [];
   const ai = step.aiVerification || {};
   const aiAdmission = ai.finalAdmission || {};
@@ -3906,7 +3908,24 @@ function renderReconstructionDetail(step) {
         <dt>Ответ</dt><dd>${esc(reconstructionLayerLabel("responseLineage", coverage.responseLineage))}</dd>
         <dt>Связи полей</dt><dd>${fmt(coverage.verifiedRequestFieldLinkCount)} запрос · ${fmt(coverage.verifiedResponseFieldLinkCount)} ответ</dd>
         <dt>Ссылки на код</dt><dd>${fmt(coverage.codeReferenceCount)}</dd>
+        ${continuity.status ? `<dt>Продолжение процесса</dt><dd>${esc({
+          same_process_proven: "тот же процесс доказан",
+          same_process_supported: "тот же процесс подтверждается идентификаторами",
+          independent_event: "отдельное событие, не продолжение исходного процесса",
+          unknown: "связь экземпляров процесса не доказана",
+        }[continuity.status] || continuity.status)}</dd>` : ""}
+        ${(continuity.correlationFields || []).length ? `<dt>Сквозные идентификаторы</dt><dd>${esc(continuity.correlationFields.join(", "))}</dd>` : ""}
       </dl>
+      ${(quality.gaps || []).length ? `<div class="reconstruction-warning"><b>Что ещё не доказано:</b> ${esc(quality.gaps.map((gap) => ({
+        route_not_proven: "полный маршрут",
+        transport_configuration_not_resolved: "физический адрес или канал",
+        request_fields_not_verified: "связи полей запроса",
+        response_not_proven: "возвращение ответа",
+        response_fields_not_verified: "связи полей ответа",
+        consumer_fields_missing_in_mapping: "поля, которые ожидает получатель",
+        mapping_not_fully_verified: "полнота Excel-маппинга",
+        process_position_not_proven: "место вызова внутри процесса",
+      }[gap] || gap)).join("; "))}</div>` : ""}
     </section>
     ${bindingEvidence.status ? `<section>
       <h4>Как выбрана кодовая операция</h4>
@@ -3949,6 +3968,7 @@ function renderReconstructionDetail(step) {
       const transport = evidence.transportEvidence || {};
       const request = evidence.requestLineage || {};
       const response = evidence.responseLineage || {};
+      const mapping = evidence.mappingEvidence || {};
       return `<section class="reconstruction-contract-evidence ${evidence.candidate ? "candidate" : "confirmed"}">
         <h4>${esc(evidence.sourceService || "?")} → ${esc(evidence.targetService || "?")} ${evidence.candidate ? "· кандидат" : "· подтверждён"}</h4>
         <dl class="reconstruction-facts">
@@ -3965,7 +3985,19 @@ function renderReconstructionDetail(step) {
           <dt>Ответ у ресивера</dt><dd>${esc((response.receiverModelTypes || []).join(", ") || "не найден")}</dd>
           <dt>Продолжение ответа</dt><dd>${esc(reconstructionLayerLabel("responseLineage", response.status))}</dd>
           <dt>Маршруты ответа</dt><dd>${esc((response.executionRouteIds || []).join(", ") || "не привязаны")}</dd>
+          ${mapping.status ? `<dt>Excel-маппинг</dt><dd>${esc({
+            complete: "полный",
+            partial: "частичный",
+            missing: "не сформирован",
+          }[mapping.status] || mapping.status)} · ${fmt(mapping.resolvedFieldRowCount)} подтверждено${mapping.unresolvedRowCount ? ` · ${fmt(mapping.unresolvedRowCount)} не доказано` : ""}</dd>
+          <dt>Покрытие получателя</dt><dd>${esc({
+            complete: "все используемые поля покрыты",
+            gap: "часть используемых полей отсутствует",
+            unknown: "используемые поля не определены",
+          }[mapping.consumerCoverageStatus] || mapping.consumerCoverageStatus || "не определено")}</dd>` : ""}
         </dl>
+        ${(mapping.missingConsumerFields || []).length ? `<p class="reconstruction-warning"><b>Получатель использует, но передача не доказана:</b> ${esc(mapping.missingConsumerFields.join(", "))}</p>` : ""}
+        ${mapping.coverageNote ? `<p class="muted">${esc(mapping.coverageNote)}</p>` : ""}
         ${(request.fieldLinkSample || []).length ? `<details><summary>Показать связанные поля запроса</summary><div class="reconstruction-field-links">${request.fieldLinkSample.map((field) => `<span>${esc((field.sourcePaths || []).join(" / ") || field.field)} → ${esc((field.targetPaths || []).join(" / ") || field.field)}</span>`).join("")}</div></details>` : ""}
         ${(response.fieldLinkSample || []).length ? `<details><summary>Показать связанные поля ответа</summary><div class="reconstruction-field-links">${response.fieldLinkSample.map((field) => `<span>${esc((field.sourcePaths || []).join(" / ") || field.field)} → ${esc((field.targetPaths || []).join(" / ") || field.field)}</span>`).join("")}</div></details>` : ""}
       </section>`;
@@ -3973,6 +4005,7 @@ function renderReconstructionDetail(step) {
     ${step.responseContinuation?.status && step.responseContinuation.status !== "not_proven" ? `<section>
       <h4>Что происходит с ответом в этом процессе</h4>
       <p><b>${esc(reconstructionLayerLabel("responseLineage", step.responseContinuation.status))}</b> · маршрутов: ${fmt(step.responseContinuation.executionRouteIds?.length)} · прочитано полей: ${fmt(step.responseContinuation.usedResponseFields?.length)}</p>
+      ${(step.responseContinuation.receiverModelTypes || []).length || (step.responseContinuation.callerModelTypes || []).length ? `<p><b>Путь ответа:</b> ${esc((step.responseContinuation.receiverModelTypes || []).join(", ") || "тип ресивера не найден")} → ${esc((step.responseContinuation.callerModelTypes || []).join(", ") || "тип вызывающего не найден")}${(step.responseContinuation.callerVariables || []).length ? ` → ${esc(step.responseContinuation.callerVariables.join(", "))}` : ""}</p>` : ""}
       ${step.responseContinuation.scopeStatus === "contract_level_fallback" ? `<p class="reconstruction-warning">Продолжение доказано на уровне контракта, но старый снимок не содержит route ID. После нового анализа оно будет привязано к конкретному пути исполнения.</p>` : ""}
       ${(step.responseContinuation.transformations || []).map((item) => `<div class="reconstruction-code-ref"><strong>${esc(item.receiver || "")}.${esc(item.method || "")}</strong><small>${esc((item.sourceVariables || []).join(", "))} → ${esc((item.resultVariables || []).join(", "))} · строка ${esc(item.line || "?")}</small></div>`).join("")}
       ${(step.responseContinuation.sinks || []).map((item) => `<div class="reconstruction-code-ref"><strong>Дальнейший вызов: ${esc(item.receiver || "")}.${esc(item.method || "")}</strong><small>${esc((item.variables || []).join(", "))} · строка ${esc(item.line || "?")}</small></div>`).join("")}
@@ -3982,6 +4015,7 @@ function renderReconstructionDetail(step) {
       <p><b>${esc(aiAdmission.status === "accepted" ? "принято" : aiAdmission.status === "rejected" ? "отклонено" : "ожидает проверки")}</b> · ${esc({
         concrete_gap_and_tool_citation_verified: "разрыв конкретен, ссылки на код проверены",
         no_tool_citation_resolves_to_source_file: "ни одна ссылка AI не разрешилась в исходный файл",
+        cross_service_claim_missing_citation_for_one_side: "AI не привёл проверяемые ссылки на код обеих сторон",
       }[aiAdmission.reason] || aiAdmission.reason || "детерминированная проверка ещё не завершена")}</p>
       ${(ai.serviceResults || []).map((item) => `<div class="reconstruction-ai-result"><b>${esc(item.serviceId)}</b><span>${esc(item.summary || (item.missingEvidence || []).join("; ") || item.status)}</span></div>`).join("")}
       ${(ai.verifiedCodeLocations || []).length ? `<details><summary>Показать проверенные ссылки на код</summary><div class="reconstruction-field-links">${ai.verifiedCodeLocations.map((item) => `<span>${esc(item.path || "")}:${esc(item.line || "?")}</span>`).join("")}</div></details>` : ""}
@@ -4288,7 +4322,11 @@ function renderReconstructionView() {
   const expectedCount = Number(comparison.expectedStepCount || 0);
   const implementedCount = Number(comparison.implementedStepCount || 0);
   const processCoverage = expectedCount > 0 ? (implementedCount / expectedCount) * 100 : 0;
-  const coverageMetrics = comparison.coverageMetrics || {};
+  const loadedCorpusCoverage = comparison.loadedCorpusCoverage || {};
+  const coverageMetrics = loadedCorpusCoverage.metrics || comparison.coverageMetrics || {};
+  const eligibleCount = Number(loadedCorpusCoverage.eligibleStepCount || 0);
+  const eligibleImplemented = Number(loadedCorpusCoverage.implementedEligibleStepCount || 0);
+  const eligibleCoverage = eligibleCount > 0 ? (eligibleImplemented / eligibleCount) * 100 : 0;
   const coverageCards = [
     ["route", "маршрут"],
     ["transport", "транспорт"],
@@ -4305,16 +4343,17 @@ function renderReconstructionView() {
     <div><strong>${fmt(expectedCount)}</strong><span>ожидается по Excel</span></div>
     <div><strong>${fmt(implementedCount)}</strong><span>реализация найдена</span></div>
     <div><strong>${processCoverage.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</strong><span>покрытие процесса кодом</span></div>
+    ${eligibleCount ? `<div><strong>${eligibleCoverage.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</strong><span>покрытие доступных сервисов · ${fmt(eligibleImplemented)} / ${fmt(eligibleCount)}</span></div>` : ""}
     <div><strong>${fmt(comparison.candidateStepCount)}</strong><span>кандидаты</span></div>
     <div><strong>${fmt(comparison.actionableGapStepCount)}</strong><span>разрывы анализатора</span></div>
     <div><strong>${fmt(Number(comparison.externalBoundaryStepCount || 0) + Number(comparison.outsideCorpusStepCount || 0))}</strong><span>границы загруженного корпуса</span></div>
     <div><strong>${fmt(process.implementationLayer?.codeProcessIds?.length)} / ${fmt(comparison.codeOnlyStepCount)}</strong><span>code-процессов / переходов только в коде</span></div>
     <div class="reconstruction-layer-coverage">
-      <strong>Покрытие отдельных слоёв доказательств</strong>
+      <strong>${eligibleCount ? "Покрытие доказательств внутри доступного корпуса" : "Покрытие отдельных слоёв доказательств"}</strong>
       <div>${coverageCards.map(([key, label]) => {
         const metric = coverageMetrics[key] || {};
         return `<span><b>${fmt(metric.covered)} / ${fmt(metric.total)}</b><i>${esc(label)} · ${fmt(metric.pct)}%</i></span>`;
-      }).join("")}</div>
+      }).join("")}${loadedCorpusCoverage.mappingConsumerComplete ? `<span><b>${fmt(loadedCorpusCoverage.mappingConsumerComplete.covered)} / ${fmt(loadedCorpusCoverage.mappingConsumerComplete.total)}</b><i>Excel покрывает получателя · ${fmt(loadedCorpusCoverage.mappingConsumerComplete.pct)}%</i></span>` : ""}</div>
     </div>`;
   for (const mode of ["business", "implementation", "compare"]) {
     $(`reconstruction-mode-${mode}`)?.classList.toggle("active", state.reconstruction.mode === mode);
