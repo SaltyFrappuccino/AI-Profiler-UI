@@ -6,6 +6,14 @@
   "scripts": {
     "start": "bun run server.ts",
     "dev": "bun --watch run server.ts",
-    "check": "bun build server.ts --target=bun --outdir=.bun-check/server && bun build static/app.js --target=browser --outdir=.bun-check/browser"
+    "check": "bun build server.ts --target=bun --outdir=.bun-check/server && bun build static/app.js --target=browser --outdir=.bun-check/browser",
+    "test": "bun test",
+    "db:migrate": "bun run db/migrate.ts",
+    "import-report": "bun run tools/import-report.ts",
+    "sandbox:up": "docker compose up --build",
+    "sandbox:down": "docker compose down"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
   }
 }
