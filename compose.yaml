@@ -17,14 +17,10 @@ services:
 
   report-loader:
     build: .
-    command:
-      - bun
-      - run
-      - import-report
-      - --report
-      - /app/reports_system/three_fp_v39/system_lineage.json
+    command: ["bun", "run", "import-report"]
     environment:
       DATABASE_URL: postgres://ai_profiler:ai_profiler@postgres:5432/ai_profiler
+      REPORT_PATH: ${REPORT_PATH:-reports_system/three_fp_v39/system_lineage.json}
     depends_on:
       postgres:
         condition: service_healthy
