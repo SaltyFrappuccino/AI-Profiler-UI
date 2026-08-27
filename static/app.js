@@ -224,7 +224,10 @@ function selectedAgentContext() {
   const process = state.sequence.processId
     ? (state.graph?.processes || []).find((item) => item.processId === state.sequence.processId)
     : null;
-  const call = state.sequence.data?.calls?.find((item) => item.id === state.sequence.selectedId) || null;
+  const mapCall = state.sequence.processMapData?.callById?.get(state.sequence.selectedId) || null;
+  const call = mapCall
+    || state.sequence.data?.calls?.find((item) => item.id === state.sequence.selectedId)
+    || null;
   return {
     process,
     call,
@@ -1055,8 +1058,9 @@ function processMapNodeHtml(call) {
     ? (call.order?.purposeSource !== "deterministic" ? "Зачем (ИИ)" : "Зачем")
     : (call.order?.reason ? "Почему здесь" : "Описание");
   const map = call.processMap;
+  const flowKind = call.flowKind || "main";
   return `
-    <button type="button" class="process-map-node tier-${esc(call.tier)} ${selected}"
+    <button type="button" class="process-map-node tier-${esc(call.tier)} flow-${esc(flowKind)} ${selected}"
       data-call-id="${esc(call.id)}" style="left:${map.x}px;top:${map.y}px;width:${map.width}px;height:${map.height}px">
       <span class="process-map-node-head">
         <b>Шаг ${fmt(call.displayStep || call.order?.step)}</b>
@@ -1064,6 +1068,7 @@ function processMapNodeHtml(call) {
       </span>
       <strong>${esc(call.payload)}</strong>
       <span class="process-map-node-meta">${esc(transportLabel(call.transport))} · ${synchronous ? "запрос + синхронный ответ" : "передача вперёд"}</span>
+      <span class="process-map-execution kind-${esc(flowKind)}">${esc(call.executionLabel || "порядок не доказан")}</span>
       <span class="process-map-purpose"><i>${purposeLabel}</i>${esc(purpose)}</span>
       <span class="process-map-node-badges">
         <em>${fmt(call.fieldCount)} связей полей</em>
@@ -1086,7 +1091,9 @@ function processMapGatewayHtml(region) {
 function processMapRegionFrameHtml(region) {
   if (!["async_task", "exception"].includes(region.kind) || !region.bounds) return "";
   return `<div class="process-map-region-frame kind-${esc(region.kind)}"
-    style="left:${region.bounds.x}px;top:${region.bounds.y}px;width:${region.bounds.width}px;height:${region.bounds.height}px"></div>`;
+    style="left:${region.bounds.x}px;top:${region.bounds.y}px;width:${region.bounds.width}px;height:${region.bounds.height}px">
+      <span>${esc(region.frameLabel || region.label)}</span>
+    </div>`;
 }
 
 function renderProcessMapRegionDetail(region, layout) {
@@ -1240,8 +1247,8 @@ function renderProcessMapStageDetail(stage, layout, process) {
   const actionSummary = registryStage
     ? `${stage.label} связывает загруженный код с участниками, указанными в архитектурном Excel; границ на карте: ${fmt(facts.calls.length)}.`
     : sourceServices.length === 1
-    ? `${sourceServices[0]} выполняет действия к сервисам ${targetServices.join(", ")}; на карте показано ${fmt(facts.calls.length)} уникальных блоков.`
-    : `Этап связывает сервисы ${facts.services.join(", ")}; на карте показано ${fmt(facts.calls.length)} уникальных блоков.`;
+    ? `${sourceServices[0]} выполняет действия к сервисам ${targetServices.join(", ")}; на карте показано ${fmt(facts.calls.length)} вхождений в пути исполнения.`
+    : `Этап связывает сервисы ${facts.services.join(", ")}; на карте показано ${fmt(facts.calls.length)} вхождений в пути исполнения.`;
   const responseSummary = registryStage
     ? "Эти границы показывают бизнес-контур процесса. Наличие ответа и его поля считаются доказанными только когда они подтверждены загруженным кодом."
     : facts.synchronousCount
@@ -1258,7 +1265,7 @@ function renderProcessMapStageDetail(stage, layout, process) {
     <button type="button" class="process-map-stage-call" data-stage-call-id="${esc(call.id)}">
       <b>${registryStage ? (call.registryBoundary?.direction === "inbound" ? "Вход" : "Внешний выход") : `Шаг ${fmt(call.displayStep || call.order?.step)}`}</b>
       <span>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</span>
-      <small>${esc(call.payload || "модель не определена")}</small>
+      <small>${esc(call.executionLabel || call.payload || "позиция не доказана")}</small>
     </button>`).join("");
   const purposeSource = registryStage
     ? "Названия и назначение взяты из архитектурного Excel; техническая привязка показана отдельно в карточке каждой границы."
@@ -1413,14 +1420,14 @@ function renderProcessMapView(activeProcess, sequenceData) {
     <div class="process-map-stage" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
       <div class="process-map-world" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
         ${layout.stages.map((stage) => `<div class="process-map-stage-band" style="left:${stage.x}px;width:${stage.width}px"></div>`).join("")}
-        ${layout.stages.map((stage) => `<button type="button" class="process-map-stage-header ${stage.isRegistryBoundary ? "registry-boundary" : ""} ${Number(stage.stage) === Number(state.sequence.selectedStage) ? "selected" : ""}" data-map-stage="${fmt(stage.stage)}" style="left:${stage.x + 8}px;width:${Math.max(150, stage.width - 16)}px" title="Открыть описание ${esc(stage.label || `этапа ${stage.stage}`)}"><b>${esc(stage.label || `Этап ${stage.stage}`)}</b><span>${fmt(stage.callCount)} блоков</span></button>`).join("")}
+        ${layout.stages.map((stage) => `<button type="button" class="process-map-stage-header ${stage.isRegistryBoundary ? "registry-boundary" : ""} ${Number(stage.stage) === Number(state.sequence.selectedStage) ? "selected" : ""}" data-map-stage="${fmt(stage.stage)}" style="left:${stage.x + 8}px;width:${Math.max(150, stage.width - 16)}px" title="Открыть описание ${esc(stage.label || `этапа ${stage.stage}`)}"><b>${esc(stage.label || `Этап ${stage.stage}`)}</b><span>${esc(stage.callCountLabel || `${fmt(stage.callCount)} ${pluralRu(stage.callCount, "действие", "действия", "действий")}`)} · ${esc(stage.executionSummary || "порядок по коду")}</span></button>`).join("")}
         ${layout.regions.map(processMapRegionFrameHtml).join("")}
         <svg class="process-map-svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" aria-label="Связи карты процесса">
           <defs><marker id="process-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs>
           ${startEdges}${edgeSvg}${endEdges}${controlSvg}
         </svg>
         <div class="process-map-event start" style="left:${layout.start.x - 16}px;top:${layout.start.y - 16}px" title="Точка входа процесса"><span>Старт</span></div>
-        ${endPoints.map((point) => `<div class="process-map-event ${point.kind === "external_boundary" ? "external-boundary" : "end"}" style="left:${point.x - 16}px;top:${point.y - 16}px" title="${point.kind === "external_boundary" ? "Продолжение уходит за границу загруженного кода" : "Наблюдаемый конец этой ветки"}"><span>${esc(point.label)}</span></div>`).join("")}
+        ${endPoints.map((point) => `<div class="process-map-event ${point.kind === "external_boundary" ? "external-boundary" : point.kind === "exception_end" ? "exception-end" : "end"}" style="left:${point.x - 16}px;top:${point.y - 16}px" title="${point.kind === "external_boundary" ? "Продолжение уходит за границу загруженного кода" : point.kind === "exception_end" ? "Аварийная ветка завершается после обработки исключения" : "Наблюдаемый конец этой ветки"}"><span>${esc(point.label)}</span></div>`).join("")}
         ${layout.calls.map(processMapNodeHtml).join("")}
         ${layout.regions.map(processMapGatewayHtml).join("")}
       </div>
@@ -1743,7 +1750,8 @@ function renderSequenceDetail() {
     renderSequenceFragmentDetail(fragment);
     return;
   }
-  const call = data?.calls.find((item) => item.id === state.sequence.selectedId);
+  const call = state.sequence.processMapData?.callById?.get(state.sequence.selectedId)
+    || data?.calls.find((item) => item.id === state.sequence.selectedId);
   if (!call) {
     $("sequence-detail").innerHTML = `<div class="empty">Выберите стрелку на диаграмме.</div>`;
     return;
@@ -1865,16 +1873,29 @@ function renderSequenceDetail() {
     })
     .join(", ");
   const stepReadiness = order?.readiness;
+  const mapExecutionBlock = call.executionLabel ? `
+    <div class="process-map-detail-execution kind-${esc(call.flowKind || "main")}">
+      <b>Как выполняется</b>
+      <span>${esc(call.executionLabel)}</span>
+      ${call.flowKind === "exception"
+        ? "<small>Этот вызов не относится к обычному пути: он выполняется только после перехода в обработчик исключения.</small>"
+        : call.flowKind === "async"
+          ? "<small>Вызов выполняется в отдельно запущенной задаче. Связи внутри неё показывают доказанный порядок, а не время выполнения.</small>"
+          : "<small>Зелёные связи показывают доказанный порядок или причинное продолжение основного пути.</small>"}
+    </div>` : "";
   const orderBlock = order ? `
     <div class="detail-section">
       <h3>Порядок вызова</h3>
+      ${mapExecutionBlock}
       ${stepReadiness ? `<p><span class="badge proof-proven">Готовность шага ${fmt(stepReadiness.score)}/100 · ${esc(readinessStatusLabel(stepReadiness.status))}</span>${stepReadiness.integrationScope === "cross_source_group" ? ` <span class="badge">межФП</span>` : ""}</p>` : ""}
       <div class="kv">
         <span>Процесс</span><b>${esc(order.processName || order.processId || "—")}</b>
-        <span>Показанный шаг</span><b>${fmt(call.step)} (этап ${fmt(order.stage)})</b>
+        <span>Показанный шаг</span><b>${fmt(call.displayStep || call.step || order.step)} (этап ${fmt(order.stage)})</b>
         <span>Исходный шаг</span><b>${fmt(order.step)}</b>
         <span>Входных путей</span><b>${fmt(call.variantCount || 1)}${call.variantCount > 1 ? " — один вызов, не повторы подряд" : ""}</b>
-        <span>После</span><span class="mono">${esc(order.afterEdgeId || "— (старт процесса)")}</span>
+        <span>После</span><span class="mono">${order.processIr?.predecessorDisplayIndex
+          ? `шаг ${fmt(order.processIr.predecessorDisplayIndex)}`
+          : esc(order.afterEdgeId || "— (старт процесса)")}</span>
         ${order.handoffInstanceIdentity ? `
           <span>Этот переход</span><b>${esc(processIdentityLabel(order.handoffInstanceIdentity))}</b>
           <span>Цепочка от входа</span><b>${esc(processIdentityLabel(order.processInstanceIdentity))}</b>
@@ -1895,9 +1916,11 @@ function renderSequenceDetail() {
         <span>${order.processIr.unsequenced
           ? "Позиция относительно соседней карточки не доказана кодом."
           : order.processIr.causalRelations?.length
-            ? `Есть ${fmt(order.processIr.causalRelations.length)} доказанная причинная зависимость.`
+            ? `Есть ${fmt(order.processIr.causalRelations.length)} ${pluralRu(order.processIr.causalRelations.length, "доказанная причинная зависимость", "доказанные причинные зависимости", "доказанных причинных зависимостей")}.`
             : "Это входной шаг или начало независимой ветки."}</span>
-        ${(order.processIr.regionKinds || []).includes("choice") || (order.processIr.regionKinds || []).includes("guard")
+        ${call.flowKind === "exception"
+          ? "<span>Ветка выполняется только после исключения; обычный путь её обходит.</span>"
+          : (order.processIr.regionKinds || []).includes("choice") || (order.processIr.regionKinds || []).includes("guard")
           ? `<span>Условие выполнения: ${esc(processBranchLabel(order.processIr.branchLabels))}.</span>`
           : ""}
         ${(order.processIr.regionKinds || []).includes("parallel")

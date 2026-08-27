@@ -1,6 +1,6 @@
 (function initProcessMap(global) {
   const NODE_WIDTH = 284;
-  const NODE_HEIGHT = 132;
+  const NODE_HEIGHT = 148;
   const ROW_GAP = 34;
   const COLUMN_GAP = 76;
   const STAGE_GAP = 116;
@@ -12,6 +12,7 @@
   const GATEWAY_HORIZONTAL_GAP = 24;
   const GATEWAY_COLLISION_HEIGHT = 76;
   const GATEWAY_MAX_PLACEMENT_ATTEMPTS = 12;
+  const EXCEPTION_LANE_GAP = 92;
 
   const uniq = (items) => [...new Set((items || []).filter(Boolean))];
   const majorRegionKinds = new Set(["choice", "parallel", "async_task", "exception", "loop"]);
@@ -74,12 +75,99 @@
     ]);
   }
 
+  function occurrenceId(call, node, index) {
+    const suffix = node?.executionRouteId || node?.nodeId || node?.displayIndex || index + 1;
+    return `${call.id}::${suffix}`;
+  }
+
+  function executionLabel(node, controlRegions, incomingRelation) {
+    if (controlRegions.some((region) => region.kind === "exception")) return "только при исключении";
+    if (incomingRelation?.kind === "async_handoff") return `асинхронно после шага ${incomingRelation.fromDisplayIndex || "?"}`;
+    const guards = controlRegions.filter((region) => region.kind === "guard" && region.condition);
+    if (guards.length === 1) return `по условию: ${guards[0].condition}`;
+    if (guards.length > 1) return `условный путь · ${guards.length} условия в коде`;
+    if (incomingRelation?.fromDisplayIndex) return `после шага ${incomingRelation.fromDisplayIndex}`;
+    if (node?.ordering === "entry") return "точка входа";
+    return node?.executionMode === "parallel" ? "параллельная ветка" : "порядок не доказан";
+  }
+
+  function actionCountLabel(value) {
+    const count = Math.abs(Number(value || 0)) % 100;
+    const last = count % 10;
+    if (count > 10 && count < 20) return `${value} действий`;
+    if (last === 1) return `${value} действие`;
+    if (last >= 2 && last <= 4) return `${value} действия`;
+    return `${value} действий`;
+  }
+
+  function expandCodeCalls(processIr, calls) {
+    const nodeById = new Map((processIr.nodes || []).map((node) => [node.nodeId, node]));
+    const regions = processIr.controlRegions || [];
+    const incomingByNodeId = new Map((processIr.relations || []).map((relation) => [relation.toNodeId, relation]));
+    const displayIndexByNodeId = new Map((processIr.nodes || []).map((node) => [node.nodeId, node.displayIndex]));
+    return calls.flatMap((call) => {
+      const nodeIds = (call.processIr?.nodeIds || []).filter((nodeId) => nodeById.has(nodeId));
+      if (!nodeIds.length) return [{ ...call, originalCallId: call.id, flowKind: "main", executionLabel: "позиция не доказана" }];
+      return nodeIds.map((nodeId, index) => {
+        const node = nodeById.get(nodeId);
+        const controlRegions = regions.filter((region) => memberNodeIds(region).includes(nodeId));
+        const exceptionRegion = controlRegions.find((region) => region.kind === "exception");
+        const asyncRegion = controlRegions.find((region) => region.kind === "async_task");
+        const incoming = incomingByNodeId.get(nodeId);
+        const incomingRelation = incoming ? {
+          ...incoming,
+          fromDisplayIndex: displayIndexByNodeId.get(incoming.fromNodeId),
+        } : null;
+        const displayStep = Number(node.displayIndex ?? call.processIr?.displayIndex ?? call.order?.step ?? 0);
+        return {
+          ...call,
+          id: occurrenceId(call, node, index),
+          originalCallId: call.id,
+          displayStep,
+          flowKind: exceptionRegion ? "exception" : asyncRegion ? "async" : "main",
+          executionLabel: executionLabel(node, controlRegions, incomingRelation),
+          controlContexts: controlRegions.map((region) => ({
+            id: region.regionId,
+            kind: region.kind,
+            condition: region.condition || "",
+            sourceLine: region.sourceLine,
+          })),
+          executionNode: node,
+          order: {
+            ...call.order,
+            step: displayStep,
+            stage: Number(node.stage ?? call.order?.stage ?? 1),
+            processIr: {
+              ...(call.order?.processIr || {}),
+              displayIndex: displayStep,
+              causalRelations: incomingRelation ? [incomingRelation] : [],
+              unsequenced: !incomingRelation && node.ordering !== "entry",
+              predecessorDisplayIndex: incomingRelation?.fromDisplayIndex || null,
+              regionKinds: uniq(controlRegions.map((region) => region.kind)),
+              branchLabels: uniq(controlRegions
+                .filter((region) => region.kind === "guard")
+                .map((region) => region.condition)),
+            },
+          },
+          processIr: {
+            ...call.processIr,
+            displayIndex: displayStep,
+            nodeIds: [nodeId],
+            occurrenceNodeId: nodeId,
+          },
+        };
+      });
+    });
+  }
+
   function build(process, calls) {
     const processIr = process?.processIr || {};
-    const codeCalls = (calls || [])
+    const sourceCodeCalls = (calls || [])
       .filter((call) => !call.isBridge && call.order?.processId === process?.processId)
       .sort((a, b) => Number(a.processIr?.displayIndex ?? a.order?.step ?? 0)
         - Number(b.processIr?.displayIndex ?? b.order?.step ?? 0));
+    const codeCalls = expandCodeCalls(processIr, sourceCodeCalls)
+      .sort((a, b) => Number(a.displayStep || 0) - Number(b.displayStep || 0));
     const codeStages = codeCalls.map((call) => Number(call.order?.stage ?? 1));
     const firstStage = codeStages.length ? Math.min(...codeStages) : 1;
     const lastStage = codeStages.length ? Math.max(...codeStages) : 1;
@@ -136,8 +224,8 @@
         id: `process-relation-${relations.length + 1}`,
         fromCallId: from.id,
         toCallId: to.id,
-        label: relationLabel(relation.kind),
-        cssClass: relationClass(relation.kind),
+        label: to.flowKind === "exception" ? "переход в обработчик исключения" : relationLabel(relation.kind),
+        cssClass: to.flowKind === "exception" ? "exception" : relationClass(relation.kind),
       });
     }
     const callByStepId = new Map();
@@ -175,14 +263,31 @@
     let maxBottom = TOP + NODE_HEIGHT;
     for (const stage of stages) {
       const stageCalls = processCalls.filter((call) => Number(call.order?.stage ?? 1) === stage);
-      const columnCount = Math.max(1, Math.ceil(stageCalls.length / MAX_ROWS));
+      const regularCalls = stageCalls.filter((call) => call.flowKind !== "exception");
+      const exceptionCalls = stageCalls.filter((call) => call.flowKind === "exception");
+      const regularColumnCount = Math.max(1, Math.ceil(regularCalls.length / MAX_ROWS));
+      const exceptionColumnCount = exceptionCalls.length ? Math.max(1, Math.ceil(exceptionCalls.length / MAX_ROWS)) : 0;
+      const columnCount = Math.max(regularColumnCount, exceptionColumnCount);
       const stageWidth = columnCount * NODE_WIDTH + Math.max(0, columnCount - 1) * COLUMN_GAP;
-      stageCalls.forEach((call, index) => {
+      regularCalls.forEach((call, index) => {
         const column = Math.floor(index / MAX_ROWS);
         const row = index % MAX_ROWS;
         call.processMap = {
           x: cursorX + column * (NODE_WIDTH + COLUMN_GAP),
           y: TOP + row * (NODE_HEIGHT + ROW_GAP),
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+        };
+        maxBottom = Math.max(maxBottom, call.processMap.y + NODE_HEIGHT);
+      });
+      const regularRows = Math.min(MAX_ROWS, Math.max(1, regularCalls.length));
+      const exceptionTop = TOP + regularRows * (NODE_HEIGHT + ROW_GAP) + EXCEPTION_LANE_GAP;
+      exceptionCalls.forEach((call, index) => {
+        const column = Math.floor(index / MAX_ROWS);
+        const row = index % MAX_ROWS;
+        call.processMap = {
+          x: cursorX + column * (NODE_WIDTH + COLUMN_GAP),
+          y: exceptionTop + row * (NODE_HEIGHT + ROW_GAP),
           width: NODE_WIDTH,
           height: NODE_HEIGHT,
         };
@@ -197,7 +302,11 @@
         x: cursorX - 22,
         width: stageWidth + 44,
         callCount: stageCalls.length,
+        callCountLabel: actionCountLabel(stageCalls.length),
         callIds: stageCalls.map((call) => call.id),
+        executionSummary: exceptionCalls.length
+          ? `${regularCalls.length} в основном пути · ${exceptionCalls.length} только при ошибке`
+          : (regularCalls.some((call) => call.flowKind === "async") ? "в отдельном потоке" : "порядок по коду"),
       });
       cursorX += stageWidth + STAGE_GAP;
     }
@@ -262,10 +371,15 @@
         links,
         bounds: {
           x: minX - 12,
-          y: minY - 12,
+          y: minY - 38,
           width: maxX - minX + 24,
-          height: maxY - minY + 24,
+          height: maxY - minY + 50,
         },
+        frameLabel: region.kind === "exception"
+          ? "Аварийный путь · выполняется только при исключении"
+          : region.kind === "async_task"
+            ? "Отдельный поток · запущен асинхронно"
+            : regionLabel(region.kind),
         x: gatewayX,
         y: gatewayY,
       });
@@ -280,8 +394,12 @@
       sourceCallId: call.id,
       x: width - 48,
       y: call.processMap.y + call.processMap.height / 2,
-      kind: call.isRegistryBoundary ? "external_boundary" : "end",
-      label: call.isRegistryBoundary ? "Вне корпуса" : (leaves.length > 1 ? "Конец ветки" : "Конец"),
+      kind: call.isRegistryBoundary ? "external_boundary" : call.flowKind === "exception" ? "exception_end" : "end",
+      label: call.isRegistryBoundary
+        ? "Вне корпуса"
+        : call.flowKind === "exception"
+          ? "Конец аварийной ветки"
+          : (leaves.length > 1 ? "Конец ветки" : "Конец"),
     }));
     return {
       width,
