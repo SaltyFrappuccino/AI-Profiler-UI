@@ -312,6 +312,24 @@
     }
 
     const callById = new Map(processCalls.map((call) => [call.id, call]));
+    for (const stage of stages) {
+      const stageCalls = processCalls.filter((call) => Number(call.order?.stage ?? 1) === stage);
+      const firstColumnX = Math.min(...stageCalls.map((call) => call.processMap.x));
+      for (const call of stageCalls.filter((item) => item.processMap.x > firstColumnX)) {
+        const predecessorRelation = relations.find((relation) => relation.toCallId === call.id);
+        const predecessor = predecessorRelation ? callById.get(predecessorRelation.fromCallId) : null;
+        if (!predecessor || Number(predecessor.order?.stage ?? 1) !== stage) continue;
+        const desiredY = predecessor.processMap.y;
+        const overlaps = stageCalls.some((other) => (
+          other.id !== call.id
+          && other.processMap.x === call.processMap.x
+          && desiredY < other.processMap.y + other.processMap.height + ROW_GAP / 2
+          && desiredY + call.processMap.height + ROW_GAP / 2 > other.processMap.y
+        ));
+        if (!overlaps) call.processMap.y = desiredY;
+      }
+    }
+    maxBottom = Math.max(...processCalls.map((call) => call.processMap.y + call.processMap.height));
     const outgoingRelations = new Map();
     const incomingRelations = new Map();
     for (const relation of relations) {
@@ -345,10 +363,22 @@
       const to = callById.get(relation.toCallId);
       const fromStep = from?.displayStep ?? from?.order?.step;
       const toStep = to?.displayStep ?? to?.order?.step;
-      relation.routeLabel = `${fromStep ?? "?"} → ${toStep ?? "?"}`;
-      relation.showRouteLabel = (relation.sourceChannelCount > 1 || relation.targetChannelCount > 1)
-        && Number.isFinite(Number(fromStep))
-        && Number.isFinite(Number(toStep));
+      if (relation.kind === "registry_context") {
+        const boundaryCall = from?.isRegistryBoundary ? from : to;
+        const codeBacked = boundaryCall?.registryBoundary?.evidenceStatus === "code_boundary_and_registry";
+        relation.routeLabel = from?.isRegistryBoundary
+          ? `Excel → шаг ${toStep ?? "?"}`
+          : codeBacked
+            ? `ветка от шага ${fromStep ?? "?"} · код + Excel`
+            : `ожидается у шага ${fromStep ?? "?"} · Excel`;
+        relation.routeLabelWidth = Math.max(94, relation.routeLabel.length * 6 + 12);
+        relation.showRouteLabel = true;
+      } else {
+        relation.routeLabel = `${fromStep ?? "?"} → ${toStep ?? "?"}`;
+        relation.routeLabelWidth = 47;
+        relation.showRouteLabel = Number.isFinite(Number(fromStep))
+          && Number.isFinite(Number(toStep));
+      }
     }
     const incoming = new Set(relations.map((relation) => relation.toCallId));
     const outgoing = new Set(relations.map((relation) => relation.fromCallId));
@@ -462,6 +492,18 @@
   }
 
   function edgeRoute(from, to, relation = {}) {
+    const sameStage = Number(from.order?.stage ?? 1) === Number(to.order?.stage ?? 1);
+    const sameColumn = Math.abs(from.processMap.x - to.processMap.x) < 2;
+    if (sameStage && sameColumn && to.processMap.y > from.processMap.y) {
+      const x = from.processMap.x + from.processMap.width / 2;
+      const y1 = from.processMap.y + from.processMap.height;
+      const y2 = to.processMap.y;
+      return {
+        path: `M ${x} ${y1} V ${y2}`,
+        labelX: x + 8,
+        labelY: y1 + (y2 - y1) / 2 - 4,
+      };
+    }
     const x1 = from.processMap.x + from.processMap.width;
     const y1 = from.processMap.y + from.processMap.height / 2;
     const x2 = to.processMap.x;

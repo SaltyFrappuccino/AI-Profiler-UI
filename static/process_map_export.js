@@ -39,9 +39,10 @@ globalThis.AIProfilerProcessMapExport = (() => {
       <text x="${stage.x + stage.width - 12}" y="44" fill="#62756e" font-size="10" text-anchor="end">${xml(stage.callCountLabel || `${number(stage.callCount)} действий`)} · ${xml(stage.executionSummary || "порядок по коду")}</text>`).join("");
     const paths = (report.relations || []).map((relation) => {
       const color = relation.cssClass === "exception" ? "#b33a3a" : relation.cssClass === "async" ? "#2775d1" : relation.cssClass === "loop" || relation.cssClass === "registry" ? "#bf7a09" : "#0d8f62";
+      const labelWidth = Number(relation.routeLabelWidth || 47);
       const label = relation.showRouteLabel ? `
         <g transform="translate(${relation.labelX} ${relation.labelY})">
-          <rect x="-3" y="-12" width="47" height="18" rx="4" fill="#fff" stroke="${color}" stroke-opacity=".4"/>
+          <rect x="-3" y="-12" width="${labelWidth}" height="18" rx="4" fill="${relation.cssClass === "registry" ? "#fffaf0" : "#fff"}" stroke="${color}" stroke-opacity=".4"/>
           <text x="4" y="1" fill="${color}" font-size="10" font-weight="800">${xml(relation.routeLabel)}</text>
         </g>` : "";
       return `<g><path d="${xml(relation.path)}" fill="none" stroke="${color}" stroke-width="${relation.cssClass === "causal" ? 4 : 3}" ${relation.cssClass === "async" || relation.cssClass === "loop" || relation.cssClass === "registry" ? 'stroke-dasharray="8 6"' : ""} marker-end="url(#arrow)"/>${label}</g>`;
@@ -110,7 +111,7 @@ function render(){
   const svg='<svg width="'+report.width+'" height="'+report.height+'" viewBox="0 0 '+report.width+' '+report.height+'"><defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#0d8f62"/></marker></defs>'
     +(report.boundaryPaths||[]).map(p=>'<path class="edge" d="'+esc(p)+'" marker-end="url(#arrow)"/>').join('')
     +(report.terminalPaths||[]).map(t=>'<path class="edge '+(t.kind==='external_boundary'?'external':'')+'" d="'+esc(t.path)+'" marker-end="url(#arrow)"/>').join('')
-    +(report.relations||[]).map(r=>'<g><path class="edge '+esc(r.cssClass)+'" d="'+esc(r.path)+'" marker-end="url(#arrow)"/><path class="edge-hit" data-relation="'+esc(r.id)+'" d="'+esc(r.path)+'"/>'+(r.showRouteLabel?'<g class="edge-label" transform="translate('+r.labelX+' '+r.labelY+')"><rect x="-3" y="-12" width="47" height="18" rx="4"></rect><text x="4" y="1">'+esc(r.routeLabel)+'</text></g>':'')+'</g>').join('')
+    +(report.relations||[]).map(r=>'<g><path class="edge '+esc(r.cssClass)+'" d="'+esc(r.path)+'" marker-end="url(#arrow)"/><path class="edge-hit" data-relation="'+esc(r.id)+'" d="'+esc(r.path)+'"/>'+(r.showRouteLabel?'<g class="edge-label '+(r.cssClass==='registry'?'registry':'')+'" transform="translate('+r.labelX+' '+r.labelY+')"><rect x="-3" y="-12" width="'+esc(r.routeLabelWidth||47)+'" height="18" rx="4"></rect><text x="4" y="1">'+esc(r.routeLabel)+'</text></g>':'')+'</g>').join('')
     +(report.controlPaths||[]).map(p=>'<path class="control '+esc(p.kind)+'" d="'+esc(p.path)+'"/>').join('')+'</svg>';
   const start='<div class="event" style="left:'+(report.start.x-16)+'px;top:'+(report.start.y-16)+'px"><small>Старт</small></div>';
   const terminals=(report.terminalPaths||[]).map(t=>'<div class="event '+(t.kind==='external_boundary'?'external':t.kind==='exception_end'?'exception':'end')+'" style="left:'+(t.x-16)+'px;top:'+(t.y-16)+'px"><small>'+esc(t.kind==='external_boundary'?'Вне корпуса':(t.label||'Конец'))+'</small></div>').join('');

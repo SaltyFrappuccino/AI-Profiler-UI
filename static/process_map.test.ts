@@ -139,4 +139,20 @@ describe("process map execution paths", () => {
     expect(routes[0].path).not.toBe(routes[1].path);
     expect(routes[0].labelX).not.toBe(routes[1].labelX);
   });
+
+  test("routes an ordered chain vertically inside one stage column", () => {
+    const from = {
+      order: { stage: 2 },
+      processMap: { x: 400, y: 200, width: 284, height: 148 },
+    };
+    const to = {
+      order: { stage: 2 },
+      processMap: { x: 400, y: 382, width: 284, height: 148 },
+    };
+
+    const route = processMap.edgeRoute(from, to, { kind: "ordered_before" });
+
+    expect(route.path).toBe("M 542 348 V 382");
+    expect(route.labelX).toBe(550);
+  });
 });

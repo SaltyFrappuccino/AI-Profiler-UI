@@ -1153,7 +1153,7 @@ function renderProcessMapRelationDetail(relation, layout) {
     <span class="detail-kicker">СВЯЗЬ БЛОКОВ</span>
     <h3>${esc(from?.targetLabel || from?.sourceLabel)} → ${esc(to?.targetLabel || to?.sourceLabel)}</h3>
     <p><b>${esc(relation.label)}.</b> ${registryContext
-      ? "Пунктир присоединяет ожидаемую бизнес-границу из Excel к ближайшей доказанной точке кода. Это не утверждение, что код внешней системы загружен или что Excel доказал порядок выполнения."
+      ? "Пунктир присоединяет ожидаемую бизнес-границу из Excel к ближайшей доказанной точке кода. Это не доказанный следующий runtime-шаг: без найденного исходящего вызова нельзя утверждать, что внешнее продолжение начинается сразу после этой карточки."
       : relation.kind === "async_handoff"
       ? "Следующий блок получает управление асинхронно; линия поэтому пунктирная."
       : relation.kind === "synchronous_continuation"
@@ -1168,7 +1168,7 @@ function renderProcessMapRelationDetail(relation, layout) {
       <span>Основание</span><b>${esc(processMapValue(relation.reason || relation.evidence || relation.sourceRef))}</b>
     </div>
     <p class="muted">${registryContext
-      ? "Нажмите на пунктирный прямоугольник, чтобы увидеть строки архитектурного реестра и найденную кодовую границу."
+      ? "Подпись «ожидается у шага N · Excel» означает точку сопоставления с реестром, а не установленный порядок исполнения. Нажмите на пунктирный прямоугольник, чтобы увидеть строки Excel и наличие или отсутствие кодовой границы."
       : "Нажмите на прямоугольник, чтобы открыть транспорт, DTO, поля, ответ и ссылки на Excel-маппинг."}</p>`;
 }
 
@@ -1374,9 +1374,10 @@ function renderProcessMapView(activeProcess, sequenceData) {
     const route = window.AIProfilerProcessMap.edgeRoute(from, to, relation);
     const path = route.path;
     const selected = relation.id === state.sequence.selectedRelationId ? "selected" : "";
+    const routeLabelWidth = Number(relation.routeLabelWidth || 47);
     const routeLabel = relation.showRouteLabel
-      ? `<g class="process-map-edge-label" transform="translate(${route.labelX} ${route.labelY})">
-          <rect x="-3" y="-12" width="47" height="18" rx="4"></rect>
+      ? `<g class="process-map-edge-label ${relation.kind === "registry_context" ? "registry" : ""}" transform="translate(${route.labelX} ${route.labelY})">
+          <rect x="-3" y="-12" width="${routeLabelWidth}" height="18" rx="4"></rect>
           <text x="4" y="1">${esc(relation.routeLabel)}</text>
         </g>`
       : "";

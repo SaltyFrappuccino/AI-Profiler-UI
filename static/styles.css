@@ -910,6 +910,8 @@ h3 {
 .process-map-relation.async .process-map-edge-label text { fill: #145a8a; }
 .process-map-relation.exception .process-map-edge-label rect { stroke: rgba(179, 58, 58, .42); }
 .process-map-relation.exception .process-map-edge-label text { fill: #8a2626; }
+.process-map-edge-label.registry rect { fill: #fffaf0; stroke: rgba(191, 122, 9, .58); }
+.process-map-edge-label.registry text { fill: #744700; }
 
 .process-map-control-link {
   fill: none;
