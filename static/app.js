@@ -2019,7 +2019,8 @@ function bindSequenceCanvasInteractions() {
   };
   canvas.onmouseleave = canvas.onmouseup;
   canvas.onwheel = (event) => {
-    if (!event.ctrlKey && !event.metaKey) return;
+    if (event.target.closest(".process-map-picker")) return;
+    if (state.sequence.diagramMode === "process" && !state.sequence.processId) return;
     event.preventDefault();
     const rect = canvas.getBoundingClientRect();
     setSequenceZoom(
