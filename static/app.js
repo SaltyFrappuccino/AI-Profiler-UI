@@ -1061,6 +1061,9 @@ function processMapNodeHtml(call) {
     : (call.order?.reason ? "Почему здесь" : "Описание");
   const map = call.processMap;
   const flowKind = call.flowKind || "main";
+  const conditionHtml = call.guardSummary
+    ? `<span class="process-map-condition" title="${esc((call.guardConditions || []).map((item) => `${item.branch === "else" ? "иначе" : "если"} ${item.condition}`).join("; "))}"><i>◇</i>${esc(call.guardSummary)}</span>`
+    : "";
   return `
     <button type="button" class="process-map-node tier-${esc(call.tier)} flow-${esc(flowKind)} ${selected}"
       data-call-id="${esc(call.id)}" style="left:${map.x}px;top:${map.y}px;width:${map.width}px;height:${map.height}px">
@@ -1071,6 +1074,7 @@ function processMapNodeHtml(call) {
       <strong>${esc(call.payload)}</strong>
       <span class="process-map-node-meta">${esc(transportLabel(call.transport))} · ${synchronous ? "запрос + синхронный ответ" : "передача вперёд"}</span>
       <span class="process-map-execution kind-${esc(flowKind)}">${esc(call.executionLabel || "порядок не доказан")}</span>
+      ${conditionHtml}
       <span class="process-map-purpose"><i>${purposeLabel}</i>${esc(purpose)}</span>
       <span class="process-map-node-badges">
         <em>${fmt(call.fieldCount)} связей полей</em>
@@ -1080,6 +1084,7 @@ function processMapNodeHtml(call) {
 }
 
 function processMapGatewayHtml(region) {
+  if (region.renderGateway === false) return "";
   const selected = region.id === state.sequence.selectedRegionId ? "selected" : "";
   return `
     <button type="button" class="process-map-gateway kind-${esc(region.kind)} ${selected}"
@@ -1091,7 +1096,7 @@ function processMapGatewayHtml(region) {
 }
 
 function processMapRegionFrameHtml(region) {
-  if (!["async_task", "exception"].includes(region.kind) || !region.bounds) return "";
+  if (!["async_task", "parallel", "exception"].includes(region.kind) || !region.bounds) return "";
   return `<div class="process-map-region-frame kind-${esc(region.kind)}"
     style="left:${region.bounds.x}px;top:${region.bounds.y}px;width:${region.bounds.width}px;height:${region.bounds.height}px">
       <span>${esc(region.frameLabel || region.label)}</span>
@@ -1128,11 +1133,11 @@ function renderProcessMapRegionDetail(region, layout) {
     <span class="detail-kicker">УПРАВЛЕНИЕ ПОТОКОМ</span>
     <h3>${esc(region.label)}</h3>
     <p>${region.kind === "choice"
-      ? "Ромб показывает взаимоисключающие ветки условия. Он не является отдельным сервисом или вызовом."
+      ? "Ромб показывает взаимоисключающие ветки условия. Подписи у выходов содержат проверку, по которой выбирается ветка."
       : region.kind === "parallel"
         ? "Этот блок запускает несколько веток параллельно. Порядок их завершения не утверждается."
         : region.kind === "async_task"
-          ? "Вызовы выполняются внутри отдельной асинхронной задачи; это не синхронное продолжение вызывающего потока."
+          ? "Рамка показывает отдельный асинхронный подпроцесс. Он запускается из исходного потока, но дальше имеет собственный порядок выполнения."
           : region.kind === "exception"
             ? "Это обработка исключения или аварийная ветка исходного кода."
             : "Этот участок кода может повторять вложенные действия."}</p>
@@ -1157,8 +1162,14 @@ function renderProcessMapRelationDetail(relation, layout) {
     <p><b>${esc(relation.label)}.</b> ${registryContext
       ? "Пунктир присоединяет ожидаемую бизнес-границу из Excel к ближайшей доказанной точке кода. Это не доказанный следующий runtime-шаг: без найденного исходящего вызова нельзя утверждать, что внешнее продолжение начинается сразу после этой карточки."
       : relation.kind === "async_handoff"
-      ? "Следующий блок получает управление асинхронно; линия поэтому пунктирная."
-      : relation.kind === "synchronous_continuation"
+        ? "Сообщение или задача передаётся в новый поток выполнения. Пунктир не означает синхронный вызов и не обещает немедленный старт получателя."
+        : relation.kind === "async_spawn"
+          ? "Код запускает отдельную асинхронную задачу. Между блоками доказан запуск, но не общий стек вызовов."
+          : relation.kind === "parallel_join"
+            ? "Продолжение начинается после точки объединения параллельных ветвей. Порядок завершения самих ветвей не задаётся."
+            : relation.kind === "completion_callback"
+              ? "Это callback завершения асинхронной операции. Он срабатывает после результата или ошибки, а не как обычный следующий вызов."
+              : relation.kind === "synchronous_continuation"
         ? "Следующий блок достигается после синхронного возврата или в том же доказанном пути исполнения."
         : relation.kind === "causal_continuation"
           ? "Доказано, что результат или управление предыдущего действия нужен следующему."
@@ -1387,13 +1398,23 @@ function renderProcessMapView(activeProcess, sequenceData) {
     return `<g class="process-map-relation ${esc(relation.cssClass)} ${selected}">
       <path class="process-map-edge" d="${path}" marker-end="url(#process-arrow)" />
       <path class="process-map-edge-hit" data-relation-id="${esc(relation.id)}" d="${path}"><title>${esc(relation.label)}</title></path>
+      ${Number.isFinite(route.startX) ? `<circle class="process-map-port source" cx="${route.startX}" cy="${route.startY}" r="3"></circle>` : ""}
+      ${Number.isFinite(route.endX) ? `<circle class="process-map-port target" cx="${route.endX}" cy="${route.endY}" r="3"></circle>` : ""}
       ${routeLabel}
     </g>`;
   }).join("");
   const controlSvg = layout.regions.flatMap((region) => region.links.map((link) => {
     const target = layout.callById.get(link.targetCallId);
     if (!target) return "";
-    return `<path class="process-map-control-link kind-${esc(region.kind)}" d="${window.AIProfilerProcessMap.controlPath(region, target)}"><title>${esc(region.label)} · ${esc(link.label)}</title></path>`;
+    const width = Math.min(176, Math.max(54, String(link.label || "ветка").length * 5.6 + 14));
+    const route = window.AIProfilerProcessMap.controlRoute(region, target, { ...link, labelWidth: width });
+    return `<g class="process-map-control-group kind-${esc(region.kind)}">
+      <path class="process-map-control-link kind-${esc(region.kind)}" d="${route.path}"><title>${esc(region.label)} · ${esc(link.label)}</title></path>
+      <g class="process-map-control-label" transform="translate(${route.labelX} ${route.labelY})">
+        <rect x="0" y="-12" width="${width}" height="18" rx="4"></rect>
+        <text x="6" y="1">${esc(link.label || "ветка")}</text>
+      </g>
+    </g>`;
   })).join("");
   const startEdges = layout.start.targetCallIds.map((callId) => {
     const call = layout.callById.get(callId);
@@ -1421,11 +1442,12 @@ function renderProcessMapView(activeProcess, sequenceData) {
     </div>
     <div class="process-map-legend">
       <span><i class="legend-task"></i> действие сервиса</span>
-      <span><i class="legend-gateway"></i> условие / параллельность</span>
-      <span><i class="legend-async-region"></i> отдельный поток</span>
+      <span><i class="legend-gateway"></i> развилка / объединение</span>
+      <span><i class="legend-condition"></i> условие выполнения блока</span>
+      <span><i class="legend-async-region"></i> асинхронный подпроцесс</span>
       <span><i class="legend-error-region"></i> только при ошибке</span>
       <span title="Линию можно выбрать и открыть её основание"><i class="legend-flow"></i> доказанный переход · линия кликабельна</span>
-      <span><i class="legend-async"></i> асинхронная передача</span>
+      <span><i class="legend-async"></i> запуск / передача в другой поток</span>
       <span title="Внешний участник известен из реестра, но его позиция относительно шагов показывается только при доказанном control flow"><i class="legend-registry"></i> внешний контур из Excel · порядок отдельно</span>
       <span title="ИИ-текст показывается только когда у него есть сохранённые основания; иначе карточка объясняет детерминированную причину попадания шага в процесс">Зачем (ИИ) / Почему здесь</span>
     </div>
@@ -1885,6 +1907,16 @@ function renderSequenceDetail() {
     })
     .join(", ");
   const stepReadiness = order?.readiness;
+  const guardBlock = (call.guardConditions || []).length ? `
+    <div class="process-map-guard-detail">
+      <b>Условия выполнения блока</b>
+      ${(call.guardConditions || []).map((guard) => `
+        <div>
+          <span>${guard.branch === "else" ? "иначе, когда условие не выполнено" : "если условие выполнено"}</span>
+          <code>${esc(guard.condition)}</code>
+          <small>${esc(guard.ownerMethodId || "метод не указан")}${guard.sourceLine ? ` · строка ${fmt(guard.sourceLine)}` : ""}</small>
+        </div>`).join("")}
+    </div>` : "";
   const mapExecutionBlock = call.executionLabel ? `
     <div class="process-map-detail-execution kind-${esc(call.flowKind || "main")}">
       <b>Как выполняется</b>
@@ -1899,6 +1931,7 @@ function renderSequenceDetail() {
     <div class="detail-section">
       <h3>Порядок вызова</h3>
       ${mapExecutionBlock}
+      ${guardBlock}
       ${stepReadiness ? `<p><span class="badge proof-proven">Готовность шага ${fmt(stepReadiness.score)}/100 · ${esc(readinessStatusLabel(stepReadiness.status))}</span>${stepReadiness.integrationScope === "cross_source_group" ? ` <span class="badge">межФП</span>` : ""}</p>` : ""}
       <div class="kv">
         <span>Процесс</span><b>${esc(order.processName || order.processId || "—")}</b>
@@ -1933,7 +1966,7 @@ function renderSequenceDetail() {
         ${call.flowKind === "exception"
           ? "<span>Ветка выполняется только после исключения; обычный путь её обходит.</span>"
           : (order.processIr.regionKinds || []).includes("choice") || (order.processIr.regionKinds || []).includes("guard")
-          ? `<span>Условие выполнения: ${esc(processBranchLabel(order.processIr.branchLabels))}.</span>`
+          ? `<span>Выбрана ${esc(processBranchLabel(order.processIr.branchLabels))}; точные проверки перечислены выше.</span>`
           : ""}
         ${(order.processIr.regionKinds || []).includes("parallel")
           ? "<span>Параллельные задачи: порядок их завершения не доказан.</span>"
@@ -2348,12 +2381,32 @@ function buildProcessMapExportReport(process, layout) {
       const from = layout.callById.get(relation.fromCallId);
       const to = layout.callById.get(relation.toCallId);
       const route = from && to ? window.AIProfilerProcessMap.edgeRoute(from, to, relation) : {};
-      return { ...relation, path: route.path || "", labelX: route.labelX, labelY: route.labelY };
+      return {
+        ...relation,
+        path: route.path || "",
+        labelX: route.labelX,
+        labelY: route.labelY,
+        startX: route.startX,
+        startY: route.startY,
+        endX: route.endX,
+        endY: route.endY,
+      };
       }),
     regions: layout.regions,
     controlPaths: layout.regions.flatMap((region) => region.links.map((link) => {
       const target = layout.callById.get(link.targetCallId);
-      return target ? { regionId: region.id, kind: region.kind, targetCallId: link.targetCallId, label: link.label, path: window.AIProfilerProcessMap.controlPath(region, target) } : null;
+      if (!target) return null;
+      const labelWidth = Math.min(176, Math.max(54, String(link.label || "ветка").length * 5.6 + 14));
+      const route = window.AIProfilerProcessMap.controlRoute(region, target, { ...link, labelWidth });
+      return {
+        regionId: region.id,
+        kind: region.kind,
+        targetCallId: link.targetCallId,
+        label: link.label,
+        path: route.path,
+        labelX: route.labelX,
+        labelY: route.labelY,
+      };
     }).filter(Boolean)),
     boundaryPaths: layout.start.targetCallIds.map((callId) => {
         const call = layout.callById.get(callId);

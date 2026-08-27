@@ -16,6 +16,15 @@ const processMap = (globalThis as typeof globalThis & {
       path: string;
       labelX: number;
       labelY: number;
+      startX: number;
+      startY: number;
+      endX: number;
+      endY: number;
+    };
+    controlRoute(region: Record<string, any>, target: Record<string, any>, link: Record<string, any>): {
+      path: string;
+      labelX: number;
+      labelY: number;
     };
   };
 }).AIProfilerProcessMap;
@@ -65,6 +74,14 @@ const process = {
         sourceLine: 56,
         nodeIds: [exceptionNode.nodeId],
       },
+      {
+        regionId: "guard-region",
+        kind: "guard",
+        condition: "(context.enabled())",
+        sourceLine: 42,
+        ownerMethodId: "Demo.process()",
+        arms: [{ label: "then", nodeIds: [normalNode.nodeId] }],
+      },
     ],
   },
 };
@@ -103,6 +120,9 @@ describe("process map execution paths", () => {
 
     expect(occurrences).toHaveLength(2);
     expect(normal?.displayStep).toBe(2);
+    expect(normal?.guardSummary).toBe("если: context.enabled()");
+    expect(normal?.order.processIr.branchLabels).toEqual(["then"]);
+    expect(normal?.order.processIr.branchConditions).toHaveLength(1);
     expect(exception?.displayStep).toBe(3);
     expect(exception?.processMap.y).toBeGreaterThan(normal?.processMap.y);
     expect(exception?.executionLabel).toBe("только при исключении");
@@ -119,6 +139,8 @@ describe("process map execution paths", () => {
 
     expect(exceptionRelation?.label).toBe("переход в обработчик исключения");
     expect(exceptionRegion?.frameLabel).toContain("Аварийный путь");
+    expect(exceptionRegion?.renderGateway).toBe(false);
+    expect(exceptionRegion?.links).toEqual([]);
     expect(layout.end.points.some((point) => point.kind === "exception_end")).toBe(true);
   });
 
@@ -135,9 +157,10 @@ describe("process map execution paths", () => {
     expect(outgoing).toHaveLength(2);
     expect(outgoing.map((relation) => relation.sourceChannelIndex)).toEqual([0, 1]);
     expect(outgoing.every((relation) => relation.showRouteLabel)).toBe(true);
-    expect(outgoing.map((relation) => relation.routeLabel)).toEqual(["1 → 2", "1 → 3"]);
+    expect(outgoing.map((relation) => relation.routeLabel)).toEqual(["1→2", "1→3"]);
     expect(routes[0].path).not.toBe(routes[1].path);
-    expect(routes[0].labelX).not.toBe(routes[1].labelX);
+    expect(routes[0].startY).not.toBe(routes[1].startY);
+    expect(routes[0].labelY).not.toBe(routes[1].labelY);
   });
 
   test("routes an ordered chain vertically inside one stage column", () => {
@@ -154,6 +177,34 @@ describe("process map execution paths", () => {
 
     expect(route.path).toBe("M 542 348 V 382");
     expect(route.labelX).toBe(550);
+  });
+
+  test("routes a skipped card around the stage column", () => {
+    const from = {
+      order: { stage: 2 },
+      processMap: { x: 400, y: 200, width: 284, height: 184 },
+    };
+    const to = {
+      order: { stage: 2 },
+      processMap: { x: 400, y: 636, width: 284, height: 184 },
+    };
+
+    const route = processMap.edgeRoute(from, to, { kind: "parallel_join" });
+
+    expect(route.path).not.toContain("M 542 384 V 636");
+    expect(route.path).toContain("H 718");
+  });
+
+  test("keeps control labels outside the target card", () => {
+    const target = { processMap: { x: 620, y: 300, width: 250, height: 184 } };
+    const route = processMap.controlRoute(
+      { x: 260, y: 120 },
+      target,
+      { index: 0, labelWidth: 176 },
+    );
+
+    expect(route.labelX + 176).toBeLessThan(target.processMap.x);
+    expect(route.labelY).toBeLessThan(target.processMap.y);
   });
 
   test("keeps outbound Excel boundaries outside the proven execution flow", () => {
@@ -185,5 +236,21 @@ describe("process map execution paths", () => {
     expect(registryStage?.executionSummary).toBe("порядок относительно шагов не доказан");
     expect(layout.end.points.some((point) => point.sourceCallId === registryCall?.id)).toBe(false);
     expect(layout.end.points.some((point) => point.sourceCallId !== registryCall?.id)).toBe(true);
+  });
+
+  test("distinguishes a parallel join from an ordinary ordered edge", () => {
+    const joinProcess = {
+      ...process,
+      processIr: {
+        ...process.processIr,
+        relations: [{ fromNodeId: entryNode.nodeId, toNodeId: normalNode.nodeId, kind: "parallel_join" }],
+      },
+    };
+
+    const layout = processMap.build(joinProcess, calls);
+    const relation = layout.relations[0];
+
+    expect(relation.cssClass).toBe("join");
+    expect(relation.label).toBe("объединение параллельных ветвей");
   });
 });

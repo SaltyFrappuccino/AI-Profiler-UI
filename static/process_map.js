@@ -1,6 +1,6 @@
 (function initProcessMap(global) {
   const NODE_WIDTH = 284;
-  const NODE_HEIGHT = 148;
+  const NODE_HEIGHT = 184;
   const ROW_GAP = 34;
   const COLUMN_GAP = 76;
   const STAGE_GAP = 116;
@@ -21,7 +21,7 @@
     return {
       choice: "Развилка",
       parallel: "Параллельный блок",
-      async_task: "Асинхронная задача",
+      async_task: "Асинхронный подпроцесс",
       exception: "Аварийная ветка",
       loop: "Цикл",
       guard: "Условие",
@@ -41,8 +41,8 @@
   function regionScope(kind) {
     return {
       choice: "одна из веток",
-      parallel: "независимые ветки",
-      async_task: "отдельный поток",
+      parallel: "ветви стартуют независимо",
+      async_task: "новый поток выполнения",
       exception: "только при ошибке",
       loop: "повтор участка",
     }[kind] || "управление потоком";
@@ -53,14 +53,18 @@
       ordered_before: "порядок доказан кодом",
       causal_continuation: "причинное продолжение",
       synchronous_continuation: "синхронное продолжение",
-      async_handoff: "асинхронная передача",
+      async_handoff: "передача в отдельный поток",
+      async_spawn: "запуск отдельной задачи",
+      parallel_join: "объединение параллельных ветвей",
+      completion_callback: "обработчик завершения",
       loop_back: "возврат цикла",
       registry_context: "ожидаемая граница из архитектурного реестра",
     }[kind] || kind || "переход";
   }
 
   function relationClass(kind) {
-    if (kind === "async_handoff") return "async";
+    if (["async_handoff", "async_spawn", "completion_callback"].includes(kind)) return "async";
+    if (kind === "parallel_join") return "join";
     if (kind === "loop_back") return "loop";
     if (kind === "causal_continuation") return "causal";
     if (kind === "registry_context") return "registry";
@@ -80,12 +84,44 @@
     return `${call.id}::${suffix}`;
   }
 
+  function branchForNode(region, nodeId) {
+    return (region.arms || []).find((arm) => (arm.nodeIds || []).includes(nodeId)) || null;
+  }
+
+  function guardContexts(controlRegions, nodeId) {
+    return controlRegions
+      .filter((region) => region.kind === "guard" && region.condition)
+      .map((region) => {
+        const arm = branchForNode(region, nodeId);
+        return {
+          id: region.regionId,
+          condition: region.condition,
+          branch: arm?.label || "then",
+          ownerMethodId: region.ownerMethodId || "",
+          sourceLine: region.sourceLine,
+        };
+      });
+  }
+
+  function compactCondition(value, maxLength = 72) {
+    const text = String(value || "")
+      .replace(/^\((.*)\)$/s, "$1")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  }
+
+  function guardSummary(guards) {
+    if (!guards.length) return "";
+    if (guards.length > 1) return `${guards.length} условия · открыть детали`;
+    const guard = guards[0];
+    const prefix = guard.branch === "else" ? "иначе: " : "если: ";
+    return `${prefix}${compactCondition(guard.condition)}`;
+  }
+
   function executionLabel(node, controlRegions, incomingRelation) {
     if (controlRegions.some((region) => region.kind === "exception")) return "только при исключении";
     if (incomingRelation?.kind === "async_handoff") return `асинхронно после шага ${incomingRelation.fromDisplayIndex || "?"}`;
-    const guards = controlRegions.filter((region) => region.kind === "guard" && region.condition);
-    if (guards.length === 1) return `по условию: ${guards[0].condition}`;
-    if (guards.length > 1) return `условный путь · ${guards.length} условия в коде`;
     if (incomingRelation?.fromDisplayIndex) return `после шага ${incomingRelation.fromDisplayIndex}`;
     if (node?.ordering === "entry") return "точка входа";
     return node?.executionMode === "parallel" ? "параллельная ветка" : "порядок не доказан";
@@ -113,6 +149,7 @@
         const controlRegions = regions.filter((region) => memberNodeIds(region).includes(nodeId));
         const exceptionRegion = controlRegions.find((region) => region.kind === "exception");
         const asyncRegion = controlRegions.find((region) => region.kind === "async_task");
+        const guards = guardContexts(controlRegions, nodeId);
         const incoming = incomingByNodeId.get(nodeId);
         const incomingRelation = incoming ? {
           ...incoming,
@@ -126,6 +163,8 @@
           displayStep,
           flowKind: exceptionRegion ? "exception" : asyncRegion ? "async" : "main",
           executionLabel: executionLabel(node, controlRegions, incomingRelation),
+          guardSummary: guardSummary(guards),
+          guardConditions: guards,
           controlContexts: controlRegions.map((region) => ({
             id: region.regionId,
             kind: region.kind,
@@ -145,8 +184,9 @@
               predecessorDisplayIndex: incomingRelation?.fromDisplayIndex || null,
               regionKinds: uniq(controlRegions.map((region) => region.kind)),
               branchLabels: uniq(controlRegions
-                .filter((region) => region.kind === "guard")
-                .map((region) => region.condition)),
+                  .filter((region) => region.kind === "guard")
+                .map((region) => branchForNode(region, nodeId)?.label || "then")),
+              branchConditions: guards,
             },
           },
           processIr: {
@@ -383,8 +423,8 @@
         relation.routeLabelWidth = Math.max(94, relation.routeLabel.length * 6 + 12);
         relation.showRouteLabel = false;
       } else {
-        relation.routeLabel = `${fromStep ?? "?"} → ${toStep ?? "?"}`;
-        relation.routeLabelWidth = 47;
+        relation.routeLabel = `${fromStep ?? "?"}→${toStep ?? "?"}`;
+        relation.routeLabelWidth = 42;
         relation.showRouteLabel = Number.isFinite(Number(fromStep))
           && Number.isFinite(Number(toStep));
       }
@@ -409,9 +449,7 @@
       const maxX = Math.max(...memberCalls.map((call) => call.processMap.x + call.processMap.width));
       const maxY = Math.max(...memberCalls.map((call) => call.processMap.y + call.processMap.height));
       const hostStage = stageLayouts.find((stage) => memberCalls.some((call) => stage.callIds.includes(call.id)));
-      const baseX = hostStage && ["parallel", "async_task"].includes(region.kind)
-        ? hostStage.x + 46
-        : hostStage && region.kind === "exception"
+      const baseX = hostStage && region.kind === "exception"
           ? hostStage.x + hostStage.width - 104
           : Math.max(46, minX - 64);
       const gatewaySpacing = GATEWAY_LABEL_WIDTH + GATEWAY_HORIZONTAL_GAP;
@@ -431,15 +469,21 @@
       }
       occupiedGateways.push({ x: gatewayX, y: gatewayY });
       const groups = region.arms?.length
-        ? region.arms.map((arm) => ({ label: arm.label || "ветка", nodeIds: arm.nodeIds || [] }))
+        ? region.arms.map((arm) => ({
+          label: arm.label === "else"
+            ? "иначе"
+            : `если ${compactCondition(region.condition, 58)}`,
+          nodeIds: arm.nodeIds || [],
+        }))
         : region.tasks?.length
           ? region.tasks.map((task) => ({ label: task.label || task.taskId || "задача", nodeIds: task.nodeIds || [] }))
           : region.nodeIds?.length
             ? [{ label: region.kind === "exception" ? "обработчик ошибки" : "управляемый участок", nodeIds: region.nodeIds }]
             : [];
-      const links = groups.map((group) => {
+      const renderGateway = ["choice", "parallel", "loop"].includes(region.kind);
+      const links = (renderGateway ? groups : []).map((group, index) => {
         const target = group.nodeIds.map((nodeId) => callByNodeId.get(nodeId)).find(Boolean);
-        return target ? { label: group.label, targetCallId: target.id } : null;
+        return target ? { label: group.label, targetCallId: target.id, index, count: groups.length } : null;
       }).filter(Boolean);
       regions.push({
         ...region,
@@ -447,6 +491,7 @@
         label: regionLabel(region.kind),
         scopeLabel: regionScope(region.kind),
         symbol: regionSymbol(region.kind),
+        renderGateway,
         memberCallIds: memberCalls.map((call) => call.id),
         links,
         bounds: {
@@ -458,7 +503,9 @@
         frameLabel: region.kind === "exception"
           ? "Аварийный путь · выполняется только при исключении"
           : region.kind === "async_task"
-            ? "Отдельный поток · запущен асинхронно"
+            ? "Асинхронный подпроцесс · отдельный контекст выполнения"
+            : region.kind === "parallel"
+              ? "Параллельный блок · порядок завершения ветвей не задан"
             : regionLabel(region.kind),
         x: gatewayX,
         y: gatewayY,
@@ -504,7 +551,8 @@
   function edgeRoute(from, to, relation = {}) {
     const sameStage = Number(from.order?.stage ?? 1) === Number(to.order?.stage ?? 1);
     const sameColumn = Math.abs(from.processMap.x - to.processMap.x) < 2;
-    if (sameStage && sameColumn && to.processMap.y > from.processMap.y) {
+    const verticalGap = to.processMap.y - (from.processMap.y + from.processMap.height);
+    if (sameStage && sameColumn && verticalGap >= 0 && verticalGap <= ROW_GAP * 2) {
       const x = from.processMap.x + from.processMap.width / 2;
       const y1 = from.processMap.y + from.processMap.height;
       const y2 = to.processMap.y;
@@ -512,32 +560,46 @@
         path: `M ${x} ${y1} V ${y2}`,
         labelX: x + 8,
         labelY: y1 + (y2 - y1) / 2 - 4,
+        startX: x,
+        startY: y1,
+        endX: x,
+        endY: y2,
       };
     }
+    const sourceCount = Math.max(1, Number(relation.sourceChannelCount || 1));
+    const sourceIndex = Math.max(0, Number(relation.sourceChannelIndex || 0));
+    const targetCount = Math.max(1, Number(relation.targetChannelCount || 1));
+    const targetIndex = Math.max(0, Number(relation.targetChannelIndex || 0));
     const x1 = from.processMap.x + from.processMap.width;
-    const y1 = from.processMap.y + from.processMap.height / 2;
+    const y1 = from.processMap.y + from.processMap.height * ((sourceIndex + 1) / (sourceCount + 1));
     const x2 = to.processMap.x;
-    const y2 = to.processMap.y + to.processMap.height / 2;
+    const y2 = to.processMap.y + to.processMap.height * ((targetIndex + 1) / (targetCount + 1));
+    const labelWidth = Math.max(1, Number(relation.routeLabelWidth || 47));
     if (x2 > x1 + 46) {
-      const sourceCount = Math.max(1, Number(relation.sourceChannelCount || 1));
-      const sourceIndex = Math.max(0, Number(relation.sourceChannelIndex || 0));
       const available = x2 - x1;
       const middle = sourceCount > 1
         ? x1 + Math.min(available - 24, 28 + sourceIndex * 34)
         : x1 + available / 2;
       return {
         path: `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`,
-        labelX: middle + 8,
-        labelY: y1 + (y2 - y1) / 2 - 6,
+        labelX: Math.max(x1 + 8, x2 - labelWidth - 12),
+        labelY: y2 - 8,
+        startX: x1,
+        startY: y1,
+        endX: x2,
+        endY: y2,
       };
     }
-    const sourceIndex = Math.max(0, Number(relation.sourceChannelIndex || 0));
     const lane = Math.max(from.processMap.y + from.processMap.height, to.processMap.y + to.processMap.height)
       + 22 + sourceIndex * 20;
     return {
       path: `M ${x1} ${y1} H ${x1 + 34} V ${lane} H ${x2 - 34} V ${y2} H ${x2}`,
       labelX: x1 + (x2 - x1) / 2,
       labelY: lane - 7,
+      startX: x1,
+      startY: y1,
+      endX: x2,
+      endY: y2,
     };
   }
 
@@ -545,18 +607,29 @@
     return edgeRoute(from, to, relation).path;
   }
 
-  function controlPath(region, target) {
+  function controlRoute(region, target, link = {}) {
     const x1 = region.x + 25;
     const y1 = region.y + 25;
-    const x2 = target.processMap.x + 18;
-    const y2 = target.processMap.y;
-    return `M ${x1} ${y1} V ${Math.max(y1 + 18, y2 - 24)} H ${x2} V ${y2}`;
+    const x2 = target.processMap.x;
+    const y2 = target.processMap.y + 24 + Number(link.index || 0) * 12;
+    const bendX = Math.max(x1 + 28, x2 - 42 - Number(link.index || 0) * 18);
+    const labelWidth = Math.max(1, Number(link.labelWidth || 54));
+    return {
+      path: `M ${x1} ${y1} H ${bendX} V ${y2} H ${x2}`,
+      labelX: Math.max(24, Math.min(bendX - 8, x2 - 12) - labelWidth),
+      labelY: Math.max(18, target.processMap.y - 8),
+    };
+  }
+
+  function controlPath(region, target, link = {}) {
+    return controlRoute(region, target, link).path;
   }
 
   global.AIProfilerProcessMap = {
     build,
     edgeRoute,
     edgePath,
+    controlRoute,
     controlPath,
     regionLabel,
     regionScope,
