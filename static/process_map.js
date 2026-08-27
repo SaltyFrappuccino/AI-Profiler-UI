@@ -240,6 +240,8 @@
       if (!anchor) continue;
       const from = inbound ? call : anchor;
       const to = inbound ? anchor : call;
+      call.registryAnchorStep = anchor.displayStep ?? anchor.order?.step ?? null;
+      call.registryPlacement = inbound ? "before_process" : "unsequenced_external";
       const key = `${from.id}|${to.id}|registry_context`;
       if (relationKeys.has(key)) continue;
       relationKeys.add(key);
@@ -250,6 +252,7 @@
         toCallId: to.id,
         label: relationLabel("registry_context"),
         cssClass: relationClass("registry_context"),
+        renderMode: inbound ? "message_flow" : "registry_reference",
         reason: boundary.evidenceStatus === "code_boundary_and_registry"
           ? "исходящая граница найдена в коде и сопоставлена со строкой Excel"
           : "направление и участник заданы архитектурным Excel; позиция привязана к точке входа процесса",
@@ -293,20 +296,26 @@
         };
         maxBottom = Math.max(maxBottom, call.processMap.y + NODE_HEIGHT);
       });
+      const registryStage = stageCalls.every((call) => call.isRegistryBoundary);
+      const registryDirection = stageCalls[0]?.registryBoundary?.direction;
       stageLayouts.push({
         stage,
-        label: stageCalls.every((call) => call.isRegistryBoundary)
-          ? (stageCalls[0]?.registryBoundary?.direction === "inbound" ? "Вход бизнес-контура" : "Внешние продолжения")
+        label: registryStage
+          ? (registryDirection === "inbound" ? "Вход бизнес-контура" : "Внешний контур")
           : `Этап ${stage}`,
-        isRegistryBoundary: stageCalls.every((call) => call.isRegistryBoundary),
+        isRegistryBoundary: registryStage,
         x: cursorX - 22,
         width: stageWidth + 44,
         callCount: stageCalls.length,
         callCountLabel: actionCountLabel(stageCalls.length),
         callIds: stageCalls.map((call) => call.id),
-        executionSummary: exceptionCalls.length
-          ? `${regularCalls.length} в основном пути · ${exceptionCalls.length} только при ошибке`
-          : (regularCalls.some((call) => call.flowKind === "async") ? "в отдельном потоке" : "порядок по коду"),
+        executionSummary: registryStage
+          ? (registryDirection === "inbound"
+            ? "контекст до точки входа · не шаг кода"
+            : "порядок относительно шагов не доказан")
+          : exceptionCalls.length
+            ? `${regularCalls.length} в основном пути · ${exceptionCalls.length} только при ошибке`
+            : (regularCalls.some((call) => call.flowKind === "async") ? "в отдельном потоке" : "порядок по коду"),
       });
       cursorX += stageWidth + STAGE_GAP;
     }
@@ -358,14 +367,6 @@
         relation.targetChannelCount = group.length;
       });
     }
-    const outboundRegistryRelations = relations.filter((relation) => {
-      if (relation.kind !== "registry_context") return false;
-      return !callById.get(relation.fromCallId)?.isRegistryBoundary;
-    });
-    outboundRegistryRelations.forEach((relation, index) => {
-      relation.registryChannelIndex = index;
-      relation.registryChannelCount = outboundRegistryRelations.length;
-    });
     for (const relation of relations) {
       const from = callById.get(relation.fromCallId);
       const to = callById.get(relation.toCallId);
@@ -375,12 +376,12 @@
         const boundaryCall = from?.isRegistryBoundary ? from : to;
         const codeBacked = boundaryCall?.registryBoundary?.evidenceStatus === "code_boundary_and_registry";
         relation.routeLabel = from?.isRegistryBoundary
-          ? `Excel → шаг ${toStep ?? "?"}`
+          ? `Excel → вход процесса`
           : codeBacked
-            ? `ветка от шага ${fromStep ?? "?"} · код + Excel`
-            : `ожидается у шага ${fromStep ?? "?"} · Excel`;
+            ? "граница найдена · порядок отдельно"
+            : "ожидаемая граница · порядок отдельно";
         relation.routeLabelWidth = Math.max(94, relation.routeLabel.length * 6 + 12);
-        relation.showRouteLabel = true;
+        relation.showRouteLabel = false;
       } else {
         relation.routeLabel = `${fromStep ?? "?"} → ${toStep ?? "?"}`;
         relation.routeLabelWidth = 47;
@@ -388,10 +389,13 @@
           && Number.isFinite(Number(toStep));
       }
     }
-    const incoming = new Set(relations.map((relation) => relation.toCallId));
-    const outgoing = new Set(relations.map((relation) => relation.fromCallId));
-    const roots = processCalls.filter((call) => !incoming.has(call.id));
-    const leaves = processCalls.filter((call) => !outgoing.has(call.id));
+    const executionRelations = relations.filter((relation) => relation.kind !== "registry_context");
+    const incoming = new Set(executionRelations.map((relation) => relation.toCallId));
+    const outgoing = new Set(executionRelations.map((relation) => relation.fromCallId));
+    const inboundRegistryCalls = registryCalls.filter((call) => call.registryBoundary?.direction === "inbound");
+    const codeRoots = codeCalls.filter((call) => !incoming.has(call.id));
+    const roots = inboundRegistryCalls.length ? inboundRegistryCalls : codeRoots;
+    const leaves = codeCalls.filter((call) => !outgoing.has(call.id));
     const regions = [];
     const occupiedGateways = [];
     for (const region of processIr.controlRegions || []) {
@@ -468,12 +472,10 @@
     const height = Math.max(640, maxBottom + 112);
     const endPoints = leaves.map((call) => ({
       sourceCallId: call.id,
-      x: width - 48,
+      x: Math.min(width - 48, call.processMap.x + call.processMap.width + 64),
       y: call.processMap.y + call.processMap.height / 2,
-      kind: call.isRegistryBoundary ? "external_boundary" : call.flowKind === "exception" ? "exception_end" : "end",
-      label: call.isRegistryBoundary
-        ? "Вне корпуса"
-        : call.flowKind === "exception"
+      kind: call.flowKind === "exception" ? "exception_end" : "end",
+      label: call.flowKind === "exception"
           ? "Конец аварийной ветки"
           : (leaves.length > 1 ? "Конец ветки" : "Конец"),
     }));
@@ -489,7 +491,7 @@
       stages: stageLayouts,
       start: { x: 52, y: avgY(roots), targetCallIds: roots.map((call) => call.id) },
       end: {
-        x: width - 48,
+        x: endPoints.length ? Math.max(...endPoints.map((point) => point.x)) : width - 48,
         y: avgY(leaves),
         sourceCallIds: leaves.map((call) => call.id),
         points: endPoints,
@@ -500,22 +502,6 @@
   }
 
   function edgeRoute(from, to, relation = {}) {
-    if (relation.kind === "registry_context" && !from.isRegistryBoundary) {
-      const x1 = from.processMap.x + from.processMap.width;
-      const y1 = from.processMap.y + from.processMap.height / 2;
-      const x2 = to.processMap.x;
-      const y2 = to.processMap.y + to.processMap.height / 2;
-      const channel = Math.max(0, Number(relation.registryChannelIndex || 0));
-      const laneY = 94 + channel * 14;
-      const startX = x1 + 18 + channel * 6;
-      const endX = x2 - 18 - channel * 6;
-      const labelWidth = Number(relation.routeLabelWidth || 94);
-      return {
-        path: `M ${x1} ${y1} H ${startX} V ${laneY} H ${endX} V ${y2} H ${x2}`,
-        labelX: Math.max(startX + 8, endX - labelWidth - 10),
-        labelY: laneY - 5,
-      };
-    }
     const sameStage = Number(from.order?.stage ?? 1) === Number(to.order?.stage ?? 1);
     const sameColumn = Math.abs(from.processMap.x - to.processMap.x) < 2;
     if (sameStage && sameColumn && to.processMap.y > from.processMap.y) {

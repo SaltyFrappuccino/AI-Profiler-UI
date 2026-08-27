@@ -1032,6 +1032,7 @@ function processMapNodeHtml(call) {
   const selected = call.id === state.sequence.selectedId ? "selected" : "";
   if (call.isRegistryBoundary) {
     const boundary = call.registryBoundary || {};
+    const inbound = boundary.direction === "inbound";
     const evidence = boundary.evidenceStatus === "code_boundary_and_registry"
       ? "кодовая граница + Excel"
       : "ожидаемый вход по Excel";
@@ -1039,15 +1040,16 @@ function processMapNodeHtml(call) {
       <button type="button" class="process-map-node registry-boundary ${selected}"
         data-call-id="${esc(call.id)}" style="left:${call.processMap.x}px;top:${call.processMap.y}px;width:${call.processMap.width}px;height:${call.processMap.height}px">
         <span class="process-map-node-head">
-          <b>${boundary.direction === "inbound" ? "Вход" : "Внешний выход"}</b>
+          <b>${inbound ? "Вход" : "Внешняя граница"}</b>
           <span>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</span>
         </span>
         <strong>${esc(call.payload)}</strong>
         <span class="process-map-node-meta">архитектурный реестр · ${esc(evidence)}</span>
+        <span class="process-map-execution kind-registry">${inbound ? "до точки входа процесса" : "точная позиция в сценарии не доказана"}</span>
         <span class="process-map-purpose"><i>Бизнес-контур</i>${esc((boundary.businessNames || [])[0] || "Ожидаемое взаимодействие из архитектурного Excel")}</span>
         <span class="process-map-node-badges">
           <em>${fmt((boundary.registryRowIds || []).length)} строк Excel</em>
-          <em>${boundary.routeId ? "исходящий вызов найден" : "точка входа ожидается"}</em>
+          <em>${boundary.routeId ? "граница найдена в коде" : "внешний отправитель не загружен"}</em>
         </span>
       </button>`;
   }
@@ -1195,12 +1197,12 @@ function renderProcessRegistryBoundaryDetail(call) {
       <span>Адрес / канал</span><b>${esc(boundary.transportAddress || "не разрешён")}</b>
       <span>Кодовая граница</span><b>${esc(boundary.sourceExitId || "для входа не применимо")}</b>
       <span>Код</span><b>${esc(boundary.sourceFile ? `${boundary.sourceFile}${boundary.sourceLine ? `:${boundary.sourceLine}` : ""}` : "код внешней стороны не загружен")}</b>
-      <span>Порядок</span><b>${codeBacked ? "привязан к исходящему маршруту в коде" : "до первого шага; задан направлением Excel"}</b>
+      <span>Порядок</span><b>${codeBacked ? "граница найдена; позиция относительно шагов не доказана" : "до точки входа; задан направлением Excel"}</b>
     </div>
     <div class="detail-section"><h3>Как взаимодействие называется в Excel</h3><ul class="process-map-branch-list">${names || "<li>Название не заполнено.</li>"}</ul></div>
     <div class="detail-section"><h3>Точки взаимодействия</h3><div class="chips">${points || "<span>не заполнены</span>"}</div></div>
     <div class="detail-section"><h3>Ссылки на архитектурный реестр</h3><ul class="process-map-branch-list">${refs || "<li>Ссылка на строку не сохранена.</li>"}</ul></div>
-    <p class="muted">Excel подтверждает ожидаемый бизнес-контур и владельцев границы, но сам по себе не доказывает порядок внутренних вызовов. Порядок зелёных блоков по-прежнему строится только по коду.</p>`;
+    <p class="muted">Внешние карточки образуют отдельный контур, как участники вне pool в BPMN. Они не соединяются со случайным внутренним шагом, пока анализатор не докажет относительный порядок по control flow.</p>`;
 }
 
 function processMapStageFacts(stage, layout) {
@@ -1371,6 +1373,7 @@ function renderProcessMapView(activeProcess, sequenceData) {
     const from = layout.callById.get(relation.fromCallId);
     const to = layout.callById.get(relation.toCallId);
     if (!from || !to) return "";
+    if (relation.renderMode === "registry_reference") return "";
     const route = window.AIProfilerProcessMap.edgeRoute(from, to, relation);
     const path = route.path;
     const selected = relation.id === state.sequence.selectedRelationId ? "selected" : "";
@@ -1423,12 +1426,12 @@ function renderProcessMapView(activeProcess, sequenceData) {
       <span><i class="legend-error-region"></i> только при ошибке</span>
       <span title="Линию можно выбрать и открыть её основание"><i class="legend-flow"></i> доказанный переход · линия кликабельна</span>
       <span><i class="legend-async"></i> асинхронная передача</span>
-      <span><i class="legend-registry"></i> граница из Excel</span>
+      <span title="Внешний участник известен из реестра, но его позиция относительно шагов показывается только при доказанном control flow"><i class="legend-registry"></i> внешний контур из Excel · порядок отдельно</span>
       <span title="ИИ-текст показывается только когда у него есть сохранённые основания; иначе карточка объясняет детерминированную причину попадания шага в процесс">Зачем (ИИ) / Почему здесь</span>
     </div>
     <div class="process-map-stage" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
       <div class="process-map-world" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
-        ${layout.stages.map((stage) => `<div class="process-map-stage-band" style="left:${stage.x}px;width:${stage.width}px"></div>`).join("")}
+        ${layout.stages.map((stage) => `<div class="process-map-stage-band ${stage.isRegistryBoundary ? "registry-boundary" : ""}" style="left:${stage.x}px;width:${stage.width}px"></div>`).join("")}
         ${layout.stages.map((stage) => `<button type="button" class="process-map-stage-header ${stage.isRegistryBoundary ? "registry-boundary" : ""} ${Number(stage.stage) === Number(state.sequence.selectedStage) ? "selected" : ""}" data-map-stage="${fmt(stage.stage)}" style="left:${stage.x + 8}px;width:${Math.max(150, stage.width - 16)}px" title="Открыть описание ${esc(stage.label || `этапа ${stage.stage}`)}"><b>${esc(stage.label || `Этап ${stage.stage}`)}</b><span>${esc(stage.callCountLabel || `${fmt(stage.callCount)} ${pluralRu(stage.callCount, "действие", "действия", "действий")}`)} · ${esc(stage.executionSummary || "порядок по коду")}</span></button>`).join("")}
         ${layout.regions.map(processMapRegionFrameHtml).join("")}
         <svg class="process-map-svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" aria-label="Связи карты процесса">
@@ -2339,12 +2342,14 @@ function buildProcessMapExportReport(process, layout) {
     start: layout.start,
     end: layout.end,
     calls: layout.calls,
-    relations: layout.relations.map((relation) => {
+    relations: layout.relations
+      .filter((relation) => relation.renderMode !== "registry_reference")
+      .map((relation) => {
       const from = layout.callById.get(relation.fromCallId);
       const to = layout.callById.get(relation.toCallId);
       const route = from && to ? window.AIProfilerProcessMap.edgeRoute(from, to, relation) : {};
       return { ...relation, path: route.path || "", labelX: route.labelX, labelY: route.labelY };
-    }),
+      }),
     regions: layout.regions,
     controlPaths: layout.regions.flatMap((region) => region.links.map((link) => {
       const target = layout.callById.get(link.targetCallId);

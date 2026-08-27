@@ -156,25 +156,34 @@ describe("process map execution paths", () => {
     expect(route.labelX).toBe(550);
   });
 
-  test("routes outbound Excel boundaries above executable cards", () => {
-    const from = {
-      isRegistryBoundary: false,
-      order: { stage: 1 },
-      processMap: { x: 400, y: 200, width: 284, height: 148 },
+  test("keeps outbound Excel boundaries outside the proven execution flow", () => {
+    const boundaryProcess = {
+      ...process,
+      architectureRegistryBoundaries: [{
+        boundaryId: "registry-outbound",
+        direction: "outbound",
+        internalService: "worker",
+        externalComponent: "External CRM",
+        afterStepId: "normal-step",
+        routeId: "route-outbound",
+        evidenceStatus: "code_boundary_and_registry",
+        registryRowIds: ["row-1"],
+      }],
     };
-    const to = {
-      isRegistryBoundary: true,
-      order: { stage: 4 },
-      processMap: { x: 1600, y: 564, width: 284, height: 148 },
-    };
+    const boundaryCalls = calls.map((call) => call.id === "decision-call"
+      ? { ...call, stepId: "normal-step" }
+      : call);
 
-    const route = processMap.edgeRoute(from, to, {
-      kind: "registry_context",
-      registryChannelIndex: 2,
-      routeLabelWidth: 170,
-    });
+    const layout = processMap.build(boundaryProcess, boundaryCalls);
+    const registryCall = layout.calls.find((call) => call.isRegistryBoundary);
+    const registryRelation = layout.relations.find((relation) => relation.kind === "registry_context");
+    const registryStage = layout.stages.find((stage) => stage.isRegistryBoundary);
 
-    expect(route.path).toContain("V 122 H");
-    expect(route.path).toContain("V 638 H 1600");
+    expect(registryRelation?.renderMode).toBe("registry_reference");
+    expect(registryRelation?.showRouteLabel).toBe(false);
+    expect(registryCall?.registryPlacement).toBe("unsequenced_external");
+    expect(registryStage?.executionSummary).toBe("порядок относительно шагов не доказан");
+    expect(layout.end.points.some((point) => point.sourceCallId === registryCall?.id)).toBe(false);
+    expect(layout.end.points.some((point) => point.sourceCallId !== registryCall?.id)).toBe(true);
   });
 });

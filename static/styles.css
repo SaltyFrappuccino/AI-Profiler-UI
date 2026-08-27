@@ -796,7 +796,7 @@ h3 {
 .legend-gateway { width: 13px; height: 13px; border: 2px solid var(--amber); transform: rotate(45deg); background: #fff9ee; }
 .legend-flow { width: 24px; border-top: 2px solid var(--green); }
 .legend-async { width: 24px; border-top: 2px dashed var(--blue); }
-.legend-registry { width: 24px; border-top: 2px dashed var(--amber); }
+.legend-registry { width: 20px; height: 12px; border: 2px dashed var(--amber); border-radius: 3px; background: #fffaf0; }
 .legend-async-region { width: 18px; height: 12px; border: 2px solid var(--blue); border-radius: 3px; background: #eef8ff; }
 .legend-error-region { width: 18px; height: 12px; border: 2px solid var(--red); border-radius: 3px; background: #fff2f2; }
 
@@ -820,6 +820,12 @@ h3 {
   border-radius: 7px;
   background: rgba(234, 243, 252, .18);
   pointer-events: none;
+}
+
+.process-map-stage-band.registry-boundary {
+  border: 1px dashed rgba(191, 122, 9, .52);
+  border-top: 3px solid rgba(191, 122, 9, .62);
+  background: rgba(255, 250, 240, .42);
 }
 
 .process-map-stage-header {
@@ -1047,6 +1053,7 @@ h3 {
 
 .process-map-execution.kind-async { border-color: var(--blue); background: #eef6ff; color: #145a8a; }
 .process-map-execution.kind-exception { border-color: var(--red); background: #fff0f0; color: #8a2626; }
+.process-map-execution.kind-registry { border-color: var(--amber); background: #fff4dd; color: #744700; }
 
 .process-map-detail-execution {
   display: grid;
