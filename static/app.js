@@ -1371,11 +1371,19 @@ function renderProcessMapView(activeProcess, sequenceData) {
     const from = layout.callById.get(relation.fromCallId);
     const to = layout.callById.get(relation.toCallId);
     if (!from || !to) return "";
-    const path = window.AIProfilerProcessMap.edgePath(from, to);
+    const route = window.AIProfilerProcessMap.edgeRoute(from, to, relation);
+    const path = route.path;
     const selected = relation.id === state.sequence.selectedRelationId ? "selected" : "";
+    const routeLabel = relation.showRouteLabel
+      ? `<g class="process-map-edge-label" transform="translate(${route.labelX} ${route.labelY})">
+          <rect x="-3" y="-12" width="47" height="18" rx="4"></rect>
+          <text x="4" y="1">${esc(relation.routeLabel)}</text>
+        </g>`
+      : "";
     return `<g class="process-map-relation ${esc(relation.cssClass)} ${selected}">
       <path class="process-map-edge" d="${path}" marker-end="url(#process-arrow)" />
       <path class="process-map-edge-hit" data-relation-id="${esc(relation.id)}" d="${path}"><title>${esc(relation.label)}</title></path>
+      ${routeLabel}
     </g>`;
   }).join("");
   const controlSvg = layout.regions.flatMap((region) => region.links.map((link) => {
@@ -2333,7 +2341,8 @@ function buildProcessMapExportReport(process, layout) {
     relations: layout.relations.map((relation) => {
       const from = layout.callById.get(relation.fromCallId);
       const to = layout.callById.get(relation.toCallId);
-      return { ...relation, path: from && to ? window.AIProfilerProcessMap.edgePath(from, to) : "" };
+      const route = from && to ? window.AIProfilerProcessMap.edgeRoute(from, to, relation) : {};
+      return { ...relation, path: route.path || "", labelX: route.labelX, labelY: route.labelY };
     }),
     regions: layout.regions,
     controlPaths: layout.regions.flatMap((region) => region.links.map((link) => {

@@ -312,6 +312,44 @@
     }
 
     const callById = new Map(processCalls.map((call) => [call.id, call]));
+    const outgoingRelations = new Map();
+    const incomingRelations = new Map();
+    for (const relation of relations) {
+      if (!outgoingRelations.has(relation.fromCallId)) outgoingRelations.set(relation.fromCallId, []);
+      if (!incomingRelations.has(relation.toCallId)) incomingRelations.set(relation.toCallId, []);
+      outgoingRelations.get(relation.fromCallId).push(relation);
+      incomingRelations.get(relation.toCallId).push(relation);
+    }
+    const relationOrder = (endpointKey) => (left, right) => {
+      const leftCall = callById.get(left[endpointKey]);
+      const rightCall = callById.get(right[endpointKey]);
+      return Number(leftCall?.displayStep ?? leftCall?.order?.step ?? 0)
+        - Number(rightCall?.displayStep ?? rightCall?.order?.step ?? 0);
+    };
+    for (const group of outgoingRelations.values()) {
+      group.sort(relationOrder("toCallId"));
+      group.forEach((relation, index) => {
+        relation.sourceChannelIndex = index;
+        relation.sourceChannelCount = group.length;
+      });
+    }
+    for (const group of incomingRelations.values()) {
+      group.sort(relationOrder("fromCallId"));
+      group.forEach((relation, index) => {
+        relation.targetChannelIndex = index;
+        relation.targetChannelCount = group.length;
+      });
+    }
+    for (const relation of relations) {
+      const from = callById.get(relation.fromCallId);
+      const to = callById.get(relation.toCallId);
+      const fromStep = from?.displayStep ?? from?.order?.step;
+      const toStep = to?.displayStep ?? to?.order?.step;
+      relation.routeLabel = `${fromStep ?? "?"} → ${toStep ?? "?"}`;
+      relation.showRouteLabel = (relation.sourceChannelCount > 1 || relation.targetChannelCount > 1)
+        && Number.isFinite(Number(fromStep))
+        && Number.isFinite(Number(toStep));
+    }
     const incoming = new Set(relations.map((relation) => relation.toCallId));
     const outgoing = new Set(relations.map((relation) => relation.fromCallId));
     const roots = processCalls.filter((call) => !incoming.has(call.id));
@@ -423,17 +461,36 @@
     };
   }
 
-  function edgePath(from, to) {
+  function edgeRoute(from, to, relation = {}) {
     const x1 = from.processMap.x + from.processMap.width;
     const y1 = from.processMap.y + from.processMap.height / 2;
     const x2 = to.processMap.x;
     const y2 = to.processMap.y + to.processMap.height / 2;
     if (x2 > x1 + 46) {
-      const middle = x1 + (x2 - x1) / 2;
-      return `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`;
+      const sourceCount = Math.max(1, Number(relation.sourceChannelCount || 1));
+      const sourceIndex = Math.max(0, Number(relation.sourceChannelIndex || 0));
+      const available = x2 - x1;
+      const middle = sourceCount > 1
+        ? x1 + Math.min(available - 24, 28 + sourceIndex * 34)
+        : x1 + available / 2;
+      return {
+        path: `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`,
+        labelX: middle + 8,
+        labelY: y1 + (y2 - y1) / 2 - 6,
+      };
     }
-    const lane = Math.max(from.processMap.y + from.processMap.height, to.processMap.y + to.processMap.height) + 22;
-    return `M ${x1} ${y1} H ${x1 + 34} V ${lane} H ${x2 - 34} V ${y2} H ${x2}`;
+    const sourceIndex = Math.max(0, Number(relation.sourceChannelIndex || 0));
+    const lane = Math.max(from.processMap.y + from.processMap.height, to.processMap.y + to.processMap.height)
+      + 22 + sourceIndex * 20;
+    return {
+      path: `M ${x1} ${y1} H ${x1 + 34} V ${lane} H ${x2 - 34} V ${y2} H ${x2}`,
+      labelX: x1 + (x2 - x1) / 2,
+      labelY: lane - 7,
+    };
+  }
+
+  function edgePath(from, to, relation = {}) {
+    return edgeRoute(from, to, relation).path;
   }
 
   function controlPath(region, target) {
@@ -446,6 +503,7 @@
 
   global.AIProfilerProcessMap = {
     build,
+    edgeRoute,
     edgePath,
     controlPath,
     regionLabel,

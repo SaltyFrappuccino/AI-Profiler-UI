@@ -12,6 +12,11 @@ const processMap = (globalThis as typeof globalThis & {
       stages: Array<Record<string, any>>;
       end: { points: Array<Record<string, any>> };
     };
+    edgeRoute(from: Record<string, any>, to: Record<string, any>, relation: Record<string, any>): {
+      path: string;
+      labelX: number;
+      labelY: number;
+    };
   };
 }).AIProfilerProcessMap;
 
@@ -115,5 +120,23 @@ describe("process map execution paths", () => {
     expect(exceptionRelation?.label).toBe("переход в обработчик исключения");
     expect(exceptionRegion?.frameLabel).toContain("Аварийный путь");
     expect(layout.end.points.some((point) => point.kind === "exception_end")).toBe(true);
+  });
+
+  test("routes fan-out transitions through separate labelled channels", () => {
+    const layout = processMap.build(process, calls);
+    const entry = layout.calls.find((call) => call.originalCallId === "entry-call")!;
+    const outgoing = layout.relations.filter((relation) => relation.fromCallId === entry.id);
+    const routes = outgoing.map((relation) => processMap.edgeRoute(
+      layout.calls.find((call) => call.id === relation.fromCallId)!,
+      layout.calls.find((call) => call.id === relation.toCallId)!,
+      relation,
+    ));
+
+    expect(outgoing).toHaveLength(2);
+    expect(outgoing.map((relation) => relation.sourceChannelIndex)).toEqual([0, 1]);
+    expect(outgoing.every((relation) => relation.showRouteLabel)).toBe(true);
+    expect(outgoing.map((relation) => relation.routeLabel)).toEqual(["1 → 2", "1 → 3"]);
+    expect(routes[0].path).not.toBe(routes[1].path);
+    expect(routes[0].labelX).not.toBe(routes[1].labelX);
   });
 });

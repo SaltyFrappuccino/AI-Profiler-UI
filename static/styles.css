@@ -891,6 +891,26 @@ h3 {
   cursor: pointer;
 }
 
+.process-map-edge-label {
+  pointer-events: none;
+}
+
+.process-map-edge-label rect {
+  fill: rgba(255, 255, 255, .96);
+  stroke: rgba(13, 143, 98, .35);
+}
+
+.process-map-edge-label text {
+  fill: var(--green-dark);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.process-map-relation.async .process-map-edge-label rect { stroke: rgba(39, 117, 209, .42); }
+.process-map-relation.async .process-map-edge-label text { fill: #145a8a; }
+.process-map-relation.exception .process-map-edge-label rect { stroke: rgba(179, 58, 58, .42); }
+.process-map-relation.exception .process-map-edge-label text { fill: #8a2626; }
+
 .process-map-control-link {
   fill: none;
   stroke: #bf7a09;
