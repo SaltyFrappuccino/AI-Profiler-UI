@@ -155,4 +155,26 @@ describe("process map execution paths", () => {
     expect(route.path).toBe("M 542 348 V 382");
     expect(route.labelX).toBe(550);
   });
+
+  test("routes outbound Excel boundaries above executable cards", () => {
+    const from = {
+      isRegistryBoundary: false,
+      order: { stage: 1 },
+      processMap: { x: 400, y: 200, width: 284, height: 148 },
+    };
+    const to = {
+      isRegistryBoundary: true,
+      order: { stage: 4 },
+      processMap: { x: 1600, y: 564, width: 284, height: 148 },
+    };
+
+    const route = processMap.edgeRoute(from, to, {
+      kind: "registry_context",
+      registryChannelIndex: 2,
+      routeLabelWidth: 170,
+    });
+
+    expect(route.path).toContain("V 122 H");
+    expect(route.path).toContain("V 638 H 1600");
+  });
 });

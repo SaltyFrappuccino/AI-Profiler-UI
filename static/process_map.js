@@ -358,6 +358,14 @@
         relation.targetChannelCount = group.length;
       });
     }
+    const outboundRegistryRelations = relations.filter((relation) => {
+      if (relation.kind !== "registry_context") return false;
+      return !callById.get(relation.fromCallId)?.isRegistryBoundary;
+    });
+    outboundRegistryRelations.forEach((relation, index) => {
+      relation.registryChannelIndex = index;
+      relation.registryChannelCount = outboundRegistryRelations.length;
+    });
     for (const relation of relations) {
       const from = callById.get(relation.fromCallId);
       const to = callById.get(relation.toCallId);
@@ -492,6 +500,22 @@
   }
 
   function edgeRoute(from, to, relation = {}) {
+    if (relation.kind === "registry_context" && !from.isRegistryBoundary) {
+      const x1 = from.processMap.x + from.processMap.width;
+      const y1 = from.processMap.y + from.processMap.height / 2;
+      const x2 = to.processMap.x;
+      const y2 = to.processMap.y + to.processMap.height / 2;
+      const channel = Math.max(0, Number(relation.registryChannelIndex || 0));
+      const laneY = 94 + channel * 14;
+      const startX = x1 + 18 + channel * 6;
+      const endX = x2 - 18 - channel * 6;
+      const labelWidth = Number(relation.routeLabelWidth || 94);
+      return {
+        path: `M ${x1} ${y1} H ${startX} V ${laneY} H ${endX} V ${y2} H ${x2}`,
+        labelX: Math.max(startX + 8, endX - labelWidth - 10),
+        labelY: laneY - 5,
+      };
+    }
     const sameStage = Number(from.order?.stage ?? 1) === Number(to.order?.stage ?? 1);
     const sameColumn = Math.abs(from.processMap.x - to.processMap.x) < 2;
     if (sameStage && sameColumn && to.processMap.y > from.processMap.y) {
