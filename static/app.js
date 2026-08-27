@@ -1079,16 +1079,32 @@ function processMapGatewayHtml(region) {
       data-region-id="${esc(region.id)}" style="left:${region.x}px;top:${region.y}px"
       title="${esc(region.label)}: открыть условие и ветки">
       <span><i>${esc(region.symbol)}</i></span>
-      <small>${esc(region.label)}</small>
+      <small><b>${esc(region.label)}</b><em>${esc(region.scopeLabel || "управление потоком")}</em></small>
     </button>`;
 }
 
+function processMapRegionFrameHtml(region) {
+  if (!["async_task", "exception"].includes(region.kind) || !region.bounds) return "";
+  return `<div class="process-map-region-frame kind-${esc(region.kind)}"
+    style="left:${region.bounds.x}px;top:${region.bounds.y}px;width:${region.bounds.width}px;height:${region.bounds.height}px"></div>`;
+}
+
 function renderProcessMapRegionDetail(region, layout) {
-  const groups = region.arms?.length ? region.arms : (region.tasks || []);
+  const groups = region.arms?.length
+    ? region.arms
+    : region.tasks?.length
+      ? region.tasks
+      : region.nodeIds?.length
+        ? [{ label: region.kind === "exception" ? "Вызовы только при обработке ошибки" : "Затронутые вызовы", nodeIds: region.nodeIds }]
+        : [];
   const sourceName = region.sourceRef || region.filePath || "";
+  const taskSourceLine = groups
+    .map((group) => String(group.taskId || "").match(/:(\d+)$/)?.[1])
+    .find(Boolean);
+  const sourceLine = region.sourceLine || taskSourceLine;
   const sourceLocation = sourceName
-    ? `${sourceName}${region.sourceLine ? `:${fmt(region.sourceLine)}` : ""}`
-    : (region.sourceLine ? `строка ${fmt(region.sourceLine)} в методе-владельце` : "—");
+    ? `${sourceName}${sourceLine ? `:${fmt(sourceLine)}` : ""}`
+    : (sourceLine ? `строка ${fmt(sourceLine)} в методе-владельце` : "—");
   const groupRows = groups.map((group, index) => {
     const nodeIds = group.nodeIds || [];
     const calls = uniq(nodeIds.map((nodeId) => {
@@ -1113,6 +1129,7 @@ function renderProcessMapRegionDetail(region, layout) {
             : "Этот участок кода может повторять вложенные действия."}</p>
     <div class="kv">
       <span>Условие</span><b>${esc(processMapValue(region.condition || region.guard))}</b>
+      <span>Смысл области</span><b>${esc(region.scopeLabel || "управление потоком")}</b>
       <span>Метод-владелец</span><b>${esc(processMapValue(region.ownerMethodId || region.ownerMethod || region.methodId))}</b>
       <span>Файл / строка</span><b>${esc(sourceLocation)}</b>
       <span>Объединение веток</span><b>${region.joinProven === true ? "доказано" : region.joinProven === false ? "не доказано" : "не применимо"}</b>
@@ -1357,15 +1374,23 @@ function renderProcessMapView(activeProcess, sequenceData) {
   const controlSvg = layout.regions.flatMap((region) => region.links.map((link) => {
     const target = layout.callById.get(link.targetCallId);
     if (!target) return "";
-    return `<path class="process-map-control-link" d="${window.AIProfilerProcessMap.controlPath(region, target)}"><title>${esc(link.label)}</title></path>`;
+    return `<path class="process-map-control-link kind-${esc(region.kind)}" d="${window.AIProfilerProcessMap.controlPath(region, target)}"><title>${esc(region.label)} · ${esc(link.label)}</title></path>`;
   })).join("");
   const startEdges = layout.start.targetCallIds.map((callId) => {
     const call = layout.callById.get(callId);
     return call ? `<path class="process-map-edge" d="M ${layout.start.x + 16} ${layout.start.y} H ${call.processMap.x}" marker-end="url(#process-arrow)" />` : "";
   }).join("");
-  const endEdges = layout.end.sourceCallIds.map((callId) => {
-    const call = layout.callById.get(callId);
-    return call ? `<path class="process-map-edge" d="M ${call.processMap.x + call.processMap.width} ${call.processMap.y + call.processMap.height / 2} H ${layout.end.x - 16}" marker-end="url(#process-arrow)" />` : "";
+  const endPoints = layout.end.points || layout.end.sourceCallIds.map((callId) => ({
+    sourceCallId: callId,
+    x: layout.end.x,
+    y: layout.end.y,
+    kind: "end",
+    label: "Конец",
+  }));
+  const endEdges = endPoints.map((point) => {
+    const call = layout.callById.get(point.sourceCallId);
+    const external = point.kind === "external_boundary" ? "external" : "";
+    return call ? `<path class="process-map-edge process-map-terminal-edge ${external}" d="M ${call.processMap.x + call.processMap.width} ${call.processMap.y + call.processMap.height / 2} H ${point.x - 16}" marker-end="url(#process-arrow)" />` : "";
   }).join("");
   $("sequence-canvas").innerHTML = `
     <div class="process-map-notice ${layout.runtimeTraceSafe ? "trace-safe" : "path-union"}">
@@ -1378,6 +1403,8 @@ function renderProcessMapView(activeProcess, sequenceData) {
     <div class="process-map-legend">
       <span><i class="legend-task"></i> действие сервиса</span>
       <span><i class="legend-gateway"></i> условие / параллельность</span>
+      <span><i class="legend-async-region"></i> отдельный поток</span>
+      <span><i class="legend-error-region"></i> только при ошибке</span>
       <span title="Линию можно выбрать и открыть её основание"><i class="legend-flow"></i> доказанный переход · линия кликабельна</span>
       <span><i class="legend-async"></i> асинхронная передача</span>
       <span><i class="legend-registry"></i> граница из Excel</span>
@@ -1387,12 +1414,13 @@ function renderProcessMapView(activeProcess, sequenceData) {
       <div class="process-map-world" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
         ${layout.stages.map((stage) => `<div class="process-map-stage-band" style="left:${stage.x}px;width:${stage.width}px"></div>`).join("")}
         ${layout.stages.map((stage) => `<button type="button" class="process-map-stage-header ${stage.isRegistryBoundary ? "registry-boundary" : ""} ${Number(stage.stage) === Number(state.sequence.selectedStage) ? "selected" : ""}" data-map-stage="${fmt(stage.stage)}" style="left:${stage.x + 8}px;width:${Math.max(150, stage.width - 16)}px" title="Открыть описание ${esc(stage.label || `этапа ${stage.stage}`)}"><b>${esc(stage.label || `Этап ${stage.stage}`)}</b><span>${fmt(stage.callCount)} блоков</span></button>`).join("")}
+        ${layout.regions.map(processMapRegionFrameHtml).join("")}
         <svg class="process-map-svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" aria-label="Связи карты процесса">
           <defs><marker id="process-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs>
           ${startEdges}${edgeSvg}${endEdges}${controlSvg}
         </svg>
         <div class="process-map-event start" style="left:${layout.start.x - 16}px;top:${layout.start.y - 16}px" title="Точка входа процесса"><span>Старт</span></div>
-        <div class="process-map-event end" style="left:${layout.end.x - 16}px;top:${layout.end.y - 16}px" title="Наблюдаемый конец загруженного пути"><span>Конец</span></div>
+        ${endPoints.map((point) => `<div class="process-map-event ${point.kind === "external_boundary" ? "external-boundary" : "end"}" style="left:${point.x - 16}px;top:${point.y - 16}px" title="${point.kind === "external_boundary" ? "Продолжение уходит за границу загруженного кода" : "Наблюдаемый конец этой ветки"}"><span>${esc(point.label)}</span></div>`).join("")}
         ${layout.calls.map(processMapNodeHtml).join("")}
         ${layout.regions.map(processMapGatewayHtml).join("")}
       </div>
@@ -2287,18 +2315,19 @@ function buildProcessMapExportReport(process, layout) {
     regions: layout.regions,
     controlPaths: layout.regions.flatMap((region) => region.links.map((link) => {
       const target = layout.callById.get(link.targetCallId);
-      return target ? { regionId: region.id, targetCallId: link.targetCallId, label: link.label, path: window.AIProfilerProcessMap.controlPath(region, target) } : null;
+      return target ? { regionId: region.id, kind: region.kind, targetCallId: link.targetCallId, label: link.label, path: window.AIProfilerProcessMap.controlPath(region, target) } : null;
     }).filter(Boolean)),
-    boundaryPaths: [
-      ...layout.start.targetCallIds.map((callId) => {
+    boundaryPaths: layout.start.targetCallIds.map((callId) => {
         const call = layout.callById.get(callId);
         return call ? `M ${layout.start.x + 16} ${layout.start.y} H ${call.processMap.x}` : "";
-      }),
-      ...layout.end.sourceCallIds.map((callId) => {
-        const call = layout.callById.get(callId);
-        return call ? `M ${call.processMap.x + call.processMap.width} ${call.processMap.y + call.processMap.height / 2} H ${layout.end.x - 16}` : "";
-      }),
-    ].filter(Boolean),
+      }).filter(Boolean),
+    terminalPaths: (layout.end.points || []).map((point) => {
+      const call = layout.callById.get(point.sourceCallId);
+      return call ? {
+        path: `M ${call.processMap.x + call.processMap.width} ${call.processMap.y + call.processMap.height / 2} H ${point.x - 16}`,
+        ...point,
+      } : null;
+    }).filter(Boolean),
   };
   return JSON.parse(JSON.stringify({ process, ...report }));
 }

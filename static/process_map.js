@@ -5,10 +5,10 @@
   const COLUMN_GAP = 76;
   const STAGE_GAP = 116;
   const MAX_ROWS = 5;
-  const TOP = 142;
+  const TOP = 166;
   const LEFT = 126;
-  const GATEWAY_TOP = 68;
-  const GATEWAY_LABEL_WIDTH = 126;
+  const GATEWAY_TOP = 72;
+  const GATEWAY_LABEL_WIDTH = 142;
   const GATEWAY_HORIZONTAL_GAP = 24;
   const GATEWAY_COLLISION_HEIGHT = 76;
   const GATEWAY_MAX_PLACEMENT_ATTEMPTS = 12;
@@ -35,6 +35,16 @@
       exception: "!",
       loop: "↻",
     }[kind] || "·";
+  }
+
+  function regionScope(kind) {
+    return {
+      choice: "одна из веток",
+      parallel: "независимые ветки",
+      async_task: "отдельный поток",
+      exception: "только при ошибке",
+      loop: "повтор участка",
+    }[kind] || "управление потоком";
   }
 
   function relationLabel(kind) {
@@ -207,7 +217,14 @@
       if (!memberCalls.length) continue;
       const minX = Math.min(...memberCalls.map((call) => call.processMap.x));
       const minY = Math.min(...memberCalls.map((call) => call.processMap.y));
-      const baseX = Math.max(46, minX - 64);
+      const maxX = Math.max(...memberCalls.map((call) => call.processMap.x + call.processMap.width));
+      const maxY = Math.max(...memberCalls.map((call) => call.processMap.y + call.processMap.height));
+      const hostStage = stageLayouts.find((stage) => memberCalls.some((call) => stage.callIds.includes(call.id)));
+      const baseX = hostStage && ["parallel", "async_task"].includes(region.kind)
+        ? hostStage.x + 46
+        : hostStage && region.kind === "exception"
+          ? hostStage.x + hostStage.width - 104
+          : Math.max(46, minX - 64);
       const gatewaySpacing = GATEWAY_LABEL_WIDTH + GATEWAY_HORIZONTAL_GAP;
       const maxGatewayX = Math.max(46, cursorX - GATEWAY_LABEL_WIDTH - 16);
       let gatewayX = baseX;
@@ -226,7 +243,11 @@
       occupiedGateways.push({ x: gatewayX, y: gatewayY });
       const groups = region.arms?.length
         ? region.arms.map((arm) => ({ label: arm.label || "ветка", nodeIds: arm.nodeIds || [] }))
-        : (region.tasks || []).map((task) => ({ label: task.label || task.taskId || "задача", nodeIds: task.nodeIds || [] }));
+        : region.tasks?.length
+          ? region.tasks.map((task) => ({ label: task.label || task.taskId || "задача", nodeIds: task.nodeIds || [] }))
+          : region.nodeIds?.length
+            ? [{ label: region.kind === "exception" ? "обработчик ошибки" : "управляемый участок", nodeIds: region.nodeIds }]
+            : [];
       const links = groups.map((group) => {
         const target = group.nodeIds.map((nodeId) => callByNodeId.get(nodeId)).find(Boolean);
         return target ? { label: group.label, targetCallId: target.id } : null;
@@ -235,9 +256,16 @@
         ...region,
         id: region.regionId || `process-region-${regions.length + 1}`,
         label: regionLabel(region.kind),
+        scopeLabel: regionScope(region.kind),
         symbol: regionSymbol(region.kind),
         memberCallIds: memberCalls.map((call) => call.id),
         links,
+        bounds: {
+          x: minX - 12,
+          y: minY - 12,
+          width: maxX - minX + 24,
+          height: maxY - minY + 24,
+        },
         x: gatewayX,
         y: gatewayY,
       });
@@ -246,8 +274,15 @@
     const avgY = (items) => items.length
       ? items.reduce((sum, call) => sum + call.processMap.y + NODE_HEIGHT / 2, 0) / items.length
       : TOP + NODE_HEIGHT / 2;
-    const width = Math.max(1160, cursorX + 92);
+    const width = Math.max(1160, cursorX + 112);
     const height = Math.max(640, maxBottom + 112);
+    const endPoints = leaves.map((call) => ({
+      sourceCallId: call.id,
+      x: width - 48,
+      y: call.processMap.y + call.processMap.height / 2,
+      kind: call.isRegistryBoundary ? "external_boundary" : "end",
+      label: call.isRegistryBoundary ? "Вне корпуса" : (leaves.length > 1 ? "Конец ветки" : "Конец"),
+    }));
     return {
       width,
       height,
@@ -259,7 +294,12 @@
       regions,
       stages: stageLayouts,
       start: { x: 52, y: avgY(roots), targetCallIds: roots.map((call) => call.id) },
-      end: { x: width - 48, y: avgY(leaves), sourceCallIds: leaves.map((call) => call.id) },
+      end: {
+        x: width - 48,
+        y: avgY(leaves),
+        sourceCallIds: leaves.map((call) => call.id),
+        points: endPoints,
+      },
       runtimeTraceSafe: processIr.runtimeTraceSafe !== false,
       unsequencedCount: Number(processIr.summary?.unsequencedNodeCount || 0),
     };
@@ -291,6 +331,7 @@
     edgePath,
     controlPath,
     regionLabel,
+    regionScope,
     relationLabel,
   };
 })(window);

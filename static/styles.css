@@ -797,6 +797,8 @@ h3 {
 .legend-flow { width: 24px; border-top: 2px solid var(--green); }
 .legend-async { width: 24px; border-top: 2px dashed var(--blue); }
 .legend-registry { width: 24px; border-top: 2px dashed var(--amber); }
+.legend-async-region { width: 18px; height: 12px; border: 2px solid var(--blue); border-radius: 3px; background: #eef8ff; }
+.legend-error-region { width: 18px; height: 12px; border: 2px solid var(--red); border-radius: 3px; background: #fff2f2; }
 
 .process-map-stage {
   position: relative;
@@ -874,6 +876,7 @@ h3 {
 .process-map-relation.loop .process-map-edge { stroke: var(--amber); stroke-dasharray: 4 5; }
 .process-map-relation.registry .process-map-edge { stroke: var(--amber); stroke-dasharray: 7 5; }
 .process-map-relation.selected .process-map-edge { stroke: var(--red); stroke-width: 4; }
+.process-map-terminal-edge.external { stroke: var(--amber); stroke-dasharray: 7 5; }
 .process-map-svg marker path { fill: context-stroke; }
 
 .process-map-edge-hit {
@@ -891,6 +894,28 @@ h3 {
   stroke-dasharray: 3 4;
   opacity: .72;
   pointer-events: none;
+}
+
+.process-map-control-link.kind-async_task,
+.process-map-control-link.kind-parallel { stroke: var(--blue); }
+.process-map-control-link.kind-exception { stroke: var(--red); }
+
+.process-map-region-frame {
+  position: absolute;
+  z-index: 3;
+  border: 2px solid;
+  border-radius: 9px;
+  pointer-events: none;
+}
+
+.process-map-region-frame.kind-async_task {
+  border-color: rgba(39, 117, 209, .42);
+  background: rgba(238, 248, 255, .18);
+}
+
+.process-map-region-frame.kind-exception {
+  border-color: rgba(179, 58, 58, .58);
+  background: rgba(255, 242, 242, .14);
 }
 
 .process-map-node {
@@ -1025,7 +1050,10 @@ h3 {
   position: absolute;
   top: 50px;
   left: 50%;
-  width: 126px;
+  width: 142px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   transform: translateX(-50%);
   border: 1px solid rgba(191, 122, 9, .2);
   border-radius: 4px;
@@ -1037,9 +1065,20 @@ h3 {
   text-align: center;
 }
 
+.process-map-gateway small b { font-size: 9.5px; }
+.process-map-gateway small em {
+  color: var(--muted);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 500;
+}
+
 .process-map-gateway.kind-parallel > span,
 .process-map-gateway.kind-async_task > span { border-color: var(--blue); background: #eef8ff; color: #145a8a; }
 .process-map-gateway.kind-exception > span { border-color: var(--red); background: #fff2f2; color: #8a2626; }
+.process-map-gateway.kind-parallel small,
+.process-map-gateway.kind-async_task small { border-color: rgba(39, 117, 209, .28); color: #145a8a; }
+.process-map-gateway.kind-exception small { border-color: rgba(179, 58, 58, .3); color: #8a2626; }
 .process-map-gateway:hover > span,
 .process-map-gateway.selected > span { box-shadow: 0 0 0 4px rgba(191, 122, 9, .16); }
 
@@ -1122,6 +1161,11 @@ h3 {
 }
 
 .process-map-event.end { border-width: 5px; }
+.process-map-event.external-boundary {
+  border-color: var(--amber);
+  border-radius: 4px;
+  background: #fffaf0;
+}
 .process-map-event span {
   position: absolute;
   top: 36px;
