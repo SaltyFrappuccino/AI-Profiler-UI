@@ -675,6 +675,24 @@ h3 {
   font-size: 12px;
 }
 
+.storage-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.storage-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.storage-export-actions .btn {
+  min-height: 34px;
+  padding-inline: 12px;
+  background: #fff;
+}
+
 .storage-breadcrumb {
   display: flex;
   gap: 7px;
@@ -1237,6 +1255,12 @@ h3 {
   }
 
   .storage-console-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .storage-head-tools {
+    width: 100%;
     align-items: flex-start;
     flex-direction: column;
   }

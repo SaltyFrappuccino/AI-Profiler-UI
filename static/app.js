@@ -4477,11 +4477,17 @@ function renderArchitectureView() {
         <h2>Модель хранения lineage</h2>
         <p>Версионированный снимок, нормализованный граф и доказательства анализа в едином контуре данных.</p>
       </div>
-      <div class="storage-runtime">
-        <span class="storage-live"><i></i>Подключено</span>
-        <div><small>PostgreSQL</small><b>${esc(String(runtime.server_version || "").split(" ")[0] || "—")}</b></div>
-        <div><small>База</small><b>${esc(runtime.database_name || "—")}</b></div>
-        <div><small>Схема</small><b>ai_profiler</b></div>
+      <div class="storage-head-tools">
+        <div class="storage-export-actions" aria-label="Экспорт архитектуры">
+          <button class="btn" id="architecture-export-mermaid" type="button" title="Скачать редактируемую Mermaid-схему">Mermaid</button>
+          <button class="btn" id="architecture-export-drawio" type="button" title="Скачать схему для diagrams.net">draw.io</button>
+        </div>
+        <div class="storage-runtime">
+          <span class="storage-live"><i></i>Подключено</span>
+          <div><small>PostgreSQL</small><b>${esc(String(runtime.server_version || "").split(" ")[0] || "—")}</b></div>
+          <div><small>База</small><b>${esc(runtime.database_name || "—")}</b></div>
+          <div><small>Схема</small><b>ai_profiler</b></div>
+        </div>
       </div>
     </header>
 
@@ -4596,6 +4602,19 @@ function renderArchitectureView() {
         </section>
       </aside>
     </div>`;
+  $("architecture-export-mermaid")?.addEventListener("click", () => exportArchitecture("mermaid", data, tableLabels));
+  $("architecture-export-drawio")?.addEventListener("click", () => exportArchitecture("drawio", data, tableLabels));
+}
+
+function exportArchitecture(kind, data, tableLabels) {
+  const exporter = window.AIProfilerArchitectureExport;
+  if (!exporter) return showError(new Error("Модуль экспорта архитектуры не загружен"));
+  const snapshotName = String(data.snapshot?.name || data.snapshot?.snapshot_id || "snapshot");
+  const safeName = snapshotName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]+/g, "_");
+  if (kind === "drawio") {
+    return download(`ai_profiler_architecture_${safeName}.drawio`, new Blob([exporter.buildDrawio(data, tableLabels)], { type: "application/xml;charset=utf-8" }));
+  }
+  return download(`ai_profiler_architecture_${safeName}.mmd`, new Blob([exporter.buildMermaid(data, tableLabels)], { type: "text/plain;charset=utf-8" }));
 }
 
 function renderCurrentView() {
