@@ -40,12 +40,13 @@ services:
     environment:
       DATABASE_URL: postgres://ai_profiler_loader:${POSTGRES_LOADER_PASSWORD:-ai_profiler_loader}@postgres:5432/ai_profiler
       DATABASE_APPLICATION_NAME: ai-profiler-report-loader
-      REPORT_PATH: ${REPORT_PATH:-reports_system/three_fp_v39/system_lineage.json}
+      REPORT_PATH: ${REPORT_PATH:-report/system_lineage.json}
+      REPORT_NAME: ${REPORT_NAME:-three_fp_v39}
     depends_on:
       migrator:
         condition: service_completed_successfully
     volumes:
-      - ./reports_system:/app/reports_system:ro
+      - ./report:/app/report:ro
     init: true
     security_opt:
       - no-new-privileges:true
@@ -63,7 +64,7 @@ services:
       report-loader:
         condition: service_completed_successfully
     volumes:
-      - ./reports_system:/app/reports_system:ro
+      - ./report:/app/report:ro
     healthcheck:
       test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:8093/api/health/ready');process.exit(r.ok?0:1)"]
       interval: 5s

@@ -15,7 +15,7 @@ export function deliveryRelativePath(filePath: string): string {
 
 export async function artifactRows(snapshotId: string, reportPath: string): Promise<ArtifactRow[]> {
   const root = dirname(reportPath);
-  const artifactRoot = resolve(root, "datasurf", "contracts");
+  const artifactRoot = resolve(root, "artifacts");
   if (!existsSync(artifactRoot)) return [];
   const rows: ArtifactRow[] = [];
   const glob = new Bun.Glob("**/*");

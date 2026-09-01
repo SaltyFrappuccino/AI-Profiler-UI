@@ -13,7 +13,7 @@ function option(name: string): string {
 }
 
 async function run(): Promise<void> {
-  const suppliedPath = option("--report") || Bun.env.REPORT_PATH || "reports_system/three_fp_v39/system_lineage.json";
+  const suppliedPath = option("--report") || Bun.env.REPORT_PATH || "report/system_lineage.json";
   const reportPath = resolve(process.cwd(), suppliedPath);
   const reportFile = Bun.file(reportPath);
   if (!(await reportFile.exists())) throw new Error(`Report not found: ${reportPath}`);
@@ -25,7 +25,7 @@ async function run(): Promise<void> {
   if (envelopeErrors.length) {
     throw new Error(`Report contract validation failed:\n${envelopeErrors.join("\n")}`);
   }
-  const name = option("--name") || basename(dirname(reportPath));
+  const name = option("--name") || Bun.env.REPORT_NAME || basename(dirname(reportPath));
   const snapshotId = option("--snapshot-id") || `${slug(name)}-${sourceHash.slice(0, 10)}`;
   const services = objects(document.services);
   const contracts = objects(document.contracts);
