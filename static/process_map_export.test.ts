@@ -13,6 +13,8 @@ const exporter = (globalThis as typeof globalThis & {
 const report = {
   width: 900,
   height: 620,
+  presentationMode: "stage",
+  flowFilter: "exception",
   start: { x: 30, y: 180 },
   stages: [{ stage: 1, x: 70, width: 420, callCount: 2, callIds: ["a", "b"] }],
   calls: [
@@ -82,6 +84,9 @@ describe("process map exports", () => {
     expect(html).toContain('class="port ');
     expect(html).toContain("только при исключении");
     expect(html).toContain("viewport.addEventListener('wheel'");
+    expect(html).toContain("локальный разбор этапа · аварийные пути");
+    const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || "";
+    expect(() => new Function(script)).not.toThrow();
   });
 
   test("keeps process semantics in SVG", () => {
@@ -90,5 +95,48 @@ describe("process map exports", () => {
     expect(svg).toContain("request.isValid()");
     expect(svg).toContain("только при исключении");
     expect(svg).toContain("stroke=\"#b33a3a\"");
+  });
+
+  test("renders overview and context cards as presentation nodes", () => {
+    const overview = {
+      ...report,
+      presentationMode: "overview",
+      flowFilter: "all",
+      calls: [{
+        id: "stage-1",
+        isStageSummary: true,
+        stageRef: 1,
+        stageLabel: "Этап 1",
+        payload: "Проверка заявки",
+        uniqueOperationCount: 2,
+        occurrenceCount: 4,
+        services: ["A", "B"],
+        flowCounts: { main: 1, conditional: 3 },
+        processMap: { x: 100, y: 120, width: 300, height: 210 },
+      }, {
+        id: "context-2",
+        isStageContextSummary: true,
+        stageRef: 2,
+        stageLabel: "Этап 2",
+        contextDirection: "outgoing",
+        uniqueOperationCount: 3,
+        occurrenceCount: 5,
+        services: ["B", "C"],
+        processMap: { x: 500, y: 120, width: 300, height: 180 },
+      }],
+      relations: [],
+      controlPaths: [],
+      regions: [],
+    };
+
+    const svg = exporter.buildSvg(overview);
+    const html = exporter.buildHtml({ title: "Overview", process: { name: "Demo" }, report: overview });
+
+    expect(svg).toContain("Проверка заявки");
+    expect(svg).not.toContain("КОНТЕКСТ ДО ЭТАПА");
+    expect(svg).toContain("ПРОДОЛЖЕНИЕ ПОСЛЕ ЭТАПА");
+    expect(html).toContain("task stage-summary");
+    expect(html).toContain("task stage-context");
+    expect(html).toContain("обзор этапов · все пути");
   });
 });

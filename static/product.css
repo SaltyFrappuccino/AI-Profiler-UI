@@ -235,7 +235,9 @@ h3 {
   align-items: center;
 }
 
-.sequence-toolbar p,
+.sequence-toolbar { align-items: start; }
+
+.sequence-summary,
 .mapping-toolbar p,
 .reconstruction-toolbar p {
   max-width: 720px;
@@ -740,6 +742,34 @@ h3 {
   height: 7px;
   border-radius: 50%;
   background: #28a575;
+}
+
+.storage-live.is-offline {
+  color: #8a5a13;
+}
+
+.storage-live.is-offline i {
+  background: #c7831e;
+}
+
+.storage-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid #dfc79f;
+  border-left: 3px solid #b87516;
+  border-radius: 4px;
+  background: #fffaf2;
+  color: #5f4a2b;
+  font-size: 11px;
+}
+
+.storage-unavailable strong {
+  flex: 0 0 auto;
+  color: #6b4310;
+  font-size: 11px;
 }
 
 .storage-runtime small {
@@ -1288,8 +1318,11 @@ h3 {
 
 @media (max-width: 900px) {
   body {
+    height: auto;
+    min-height: 100%;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    overflow: auto;
   }
 
   .rail {
@@ -1331,6 +1364,17 @@ h3 {
   .shell {
     height: auto;
     min-height: 0;
+    overflow: visible;
+  }
+
+  #view-sequence.view.active,
+  #view-sequence .sequence-panel {
+    height: auto;
+  }
+
+  #view-sequence .sequence-panel {
+    grid-template-rows: auto auto auto;
+    overflow: visible;
   }
 
   .sequence-layout,

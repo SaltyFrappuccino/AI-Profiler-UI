@@ -17,6 +17,9 @@ const state = {
     selectedId: "",
     selectedFragmentId: "",
     selectedStage: null,
+    mapStage: null,
+    mapView: "overview",
+    mapFlow: "all",
     selectedRegionId: "",
     selectedRelationId: "",
     processId: "",
@@ -57,7 +60,6 @@ const state = {
   },
   agent: {
     tab: "detail",
-    mode: "facts",
     loading: false,
     collapsed: false,
     history: [],
@@ -85,99 +87,22 @@ const BRANCH_ORDERINGS = new Set([
 ]);
 
 const $ = (id) => document.getElementById(id);
-const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-}[ch]));
-const fmt = (value) => Number(value || 0).toLocaleString("ru-RU");
-const formatBytes = (value) => {
-  let size = Number(value || 0);
-  const units = ["Б", "КБ", "МБ", "ГБ"];
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
-};
-const pluralRu = (value, one, few, many) => {
-  const count = Math.abs(Number(value || 0)) % 100;
-  const last = count % 10;
-  if (count > 10 && count < 20) return many;
-  if (last === 1) return one;
-  if (last >= 2 && last <= 4) return few;
-  return many;
-};
-const countOf = (value, key) => Number((value || {})[key] || 0);
-const norm = (value) => String(value || "").replace(/[^a-z0-9]+/gi, "").toLowerCase();
-const uniq = (items) => [...new Set((items || []).filter(Boolean))];
-const processNarrativeSummary = (value) => {
-  const text = String(value || "").trim();
-  const gapMarker = text.search(/\s+(?:не подтверждено|неподтверждено|unconfirmed|gaps?):\s*/i);
-  return gapMarker >= 0 ? text.slice(0, gapMarker).trim() : text;
-};
-const mappingCoverageLabel = (mapping = {}) => {
-  const source = `${fmt(mapping.sourceMappedFieldCount)}/${fmt(mapping.sourceSchemaFieldCount)}`;
-  const target = `${fmt(mapping.targetMappedFieldCount)}/${fmt(mapping.targetSchemaFieldCount)}`;
-  if (mapping.coverageClass === "consumer_projection_complete") {
-    return `полный для получателя · ${target} · ${fmt(mapping.unconsumedTransmittedFieldCount)} переданных полей не используются`;
-  }
-  if (mapping.coverageClass === "consumer_compatible_with_defaults") {
-    return `совместим · ${fmt(mapping.optionalConsumedFieldNotTransmittedCount)} необязательных полей имеют значение по умолчанию · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "target_binding_unresolved") {
-    return `кандидат · endpoint получателя не подтверждён · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "consumer_expectation_gap") {
-    return `разрыв контракта · не передано ${fmt(mapping.provenMissingConsumedFieldCount)} читаемых полей · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "consumer_field_absence_unverified") {
-    return `нужно проверить · ${fmt(mapping.observedConsumedFieldNotTransmittedCount)} читаемых полей не передаются, но ошибка не доказана · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "declared_target_contract_gap") {
-    return `различие деклараций · чтение отсутствующих полей не доказано · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "bilateral_gap") {
-    return `доказанный разрыв и лишние поля · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "bilateral_inventory_gap") {
-    return `инвентари моделей различаются · runtime-разрыв не доказан · ${source} → ${target}`;
-  }
-  if (mapping.coverageClass === "unresolved_field_identity") {
-    return `транспорт найден · идентичность полей не восстановлена · ${fmt(mapping.rowCount)} строк`;
-  }
-  if (mapping.status === "partial" && Number(mapping.unresolvedRowCount)) {
-    return `частичный · ${fmt(mapping.resolvedFieldRowCount ?? mapping.leafRows)} пар подтверждено, ${fmt(mapping.unresolvedRowCount)} не разрешено`;
-  }
-  if (mapping.coverageStatus === "full") return `полный по физическим схемам · ${source} → ${target}`;
-  if (mapping.coverageStatus === "partial" && Number(mapping.resolvedFieldRowCount ?? mapping.leafRows)) {
-    return `частичный · ${source} → ${target}`;
-  }
-  if (mapping.coverageStatus === "partial" && Number(mapping.rowCount)) {
-    return `транспорт зафиксирован · ${fmt(mapping.rowCount)} строк инвентаризации · пары полей не доказаны`;
-  }
-  if (mapping.coverageStatus === "partial") return `частичный · ${source} → ${target}`;
-  if (mapping.coverageStatus === "missing") return "пополевый маппинг не построен";
-  return `${fmt(mapping.leafRows)} строк · полнота не доказана`;
-};
-const contractMapping = (contract = {}) => contract.mapping || contract.crossServiceDataSurf || contract.dataSurf || {};
-const processCorpusClosed = (process = {}) => process.corpusClosureComplete ?? process.assemblyComplete !== false;
-const processClosureLabel = (process = {}) => ({
-  closed: "строго замкнут",
-  open_external_dependency: `${fmt(process.unloadedDependencyCount || 0)} выходов в незагруженные сервисы`,
-  internal_gap: `${fmt(process.internalGapCount || 0)} внутренних разрывов`,
-  incoming_context_gap: "не собран путь входящего отправителя",
-  unknown_gap: `${fmt(process.unknownGapCount || 0)} неразобранных выходов`,
-}[process.closureStatus] || (process.assemblyComplete === false ? "есть незакрытые выходы" : "наблюдаемые границы замкнуты"));
-const mappingDirectionsLabel = (mapping = {}) => {
-  const directions = mapping.directions || [];
-  if (directions.includes("request") && directions.includes("response")) return "запрос и синхронный ответ";
-  if (directions.includes("response")) return "синхронный ответ";
-  return "запрос";
-};
+const {
+  esc,
+  fmt,
+  formatBytes,
+  pluralRu,
+  countOf,
+  norm,
+  uniq,
+  hasNumericValue,
+  processNarrativeSummary,
+  mappingCoverageLabel,
+  contractMapping,
+  processCorpusClosed,
+  processClosureLabel,
+  mappingDirectionsLabel,
+} = globalThis.AIProfilerPresentation;
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -191,189 +116,18 @@ async function api(path, options = {}) {
   return res.json();
 }
 
-function setInspectorTab(tab) {
-  const next = tab === "agent" ? "agent" : "detail";
-  state.agent.tab = next;
-  const detail = $("sequence-detail");
-  const agent = $("process-agent");
-  const detailTab = $("inspector-tab-detail");
-  const agentTab = $("inspector-tab-agent");
-  if (detail) detail.hidden = next !== "detail";
-  if (agent) agent.hidden = next !== "agent";
-  detailTab?.classList.toggle("active", next === "detail");
-  agentTab?.classList.toggle("active", next === "agent");
-  detailTab?.setAttribute("aria-selected", next === "detail" ? "true" : "false");
-  agentTab?.setAttribute("aria-selected", next === "agent" ? "true" : "false");
-  $("seq-agent")?.classList.toggle("active", next === "agent");
-}
-
-function setInspectorCollapsed(collapsed) {
-  state.agent.collapsed = Boolean(collapsed);
-  const layout = document.querySelector(".sequence-layout");
-  const button = $("inspector-collapse");
-  layout?.classList.toggle("inspector-collapsed", state.agent.collapsed);
-  if (button) {
-    button.textContent = state.agent.collapsed ? "‹" : "›";
-    button.title = state.agent.collapsed ? "Развернуть инспектор" : "Свернуть инспектор";
-    button.setAttribute("aria-label", button.title);
-  }
-  requestAnimationFrame(() => fitSequence());
-}
-
-function selectedAgentContext() {
-  const process = state.sequence.processId
-    ? (state.graph?.processes || []).find((item) => item.processId === state.sequence.processId)
-    : null;
-  const mapCall = state.sequence.processMapData?.callById?.get(state.sequence.selectedId) || null;
-  const call = mapCall
-    || state.sequence.data?.calls?.find((item) => item.id === state.sequence.selectedId)
-    || null;
-  return {
-    process,
-    call,
-    processId: process?.processId || "",
-    contractId: call?.isBridge ? "" : (call?.contractId || ""),
-    stage: state.sequence.selectedStage || Number(call?.order?.stage || 0) || null,
-  };
-}
-
-function updateAgentContext() {
-  const label = $("agent-context");
-  if (!label) return;
-  const { process, call, stage } = selectedAgentContext();
-  label.textContent = [
-    process?.name || "весь снимок",
-    stage ? `этап ${stage}` : "",
-    call ? `${call.sourceLabel} → ${call.targetLabel}` : "",
-  ].filter(Boolean).join(" · ");
-}
-
-function agentCitationHref(citation) {
-  if (citation.contractId && state.snapshot?.id) {
-    const params = new URLSearchParams({
-      view: "mappings",
-      snapshot: state.snapshot.id,
-      mapping: citation.contractId,
-    });
-    return `${window.location.pathname}?${params.toString()}`;
-  }
-  const artifact = String(citation.artifact || "");
-  if (!artifact) return "";
-  if (artifact.startsWith("/")) return artifact;
-  return `/file?path=${encodeURIComponent(artifact)}`;
-}
-
-function renderAgentStageBrief(brief) {
-  const metrics = (brief.metrics || []).map((item) => `
-    <div class="agent-stage-metric"><b>${fmt(item.value)}</b><span>${esc(item.label)}</span></div>`).join("");
-  const actions = (brief.actions || []).map((action) => {
-    const details = [
-      action.operation ? `метод ${action.operation}` : "",
-      action.transport,
-      action.payload ? `модель ${action.payload}` : "",
-      action.ordering,
-    ].filter(Boolean).map((item) => `<span>${esc(item)}</span>`).join("");
-    return `<article class="agent-stage-action ${action.proven ? "proven" : "limited"}">
-      <div class="agent-stage-action-head">
-        <b>${esc(action.title)}</b>
-        ${action.variantCount > 1 ? `<span class="badge info">${fmt(action.variantCount)} варианта</span>` : ""}
-      </div>
-      <div class="agent-stage-action-meta">${details}</div>
-      <p>${esc(action.response)}</p>
-      <div class="agent-stage-action-foot">
-        <span>Связи полей: ${fmt(action.fieldLinkCount)}</span>
-        ${action.readiness != null ? `<span>готовность ${fmt(action.readiness)}/100</span>` : ""}
-      </div>
-    </article>`;
-  }).join("");
-  const evidence = (brief.evidence || []).map((item) => `<li>${esc(item)}</li>`).join("");
-  const limitations = (brief.limitations || []).map((item) => `<li>${esc(item)}</li>`).join("");
-  return `<section class="agent-stage-brief">
-    <h3>${esc(brief.title)}</h3>
-    <p class="agent-stage-summary">${esc(brief.summary)}</p>
-    <div class="agent-stage-metrics">${metrics}</div>
-    <h4>Действия этапа</h4>
-    <div class="agent-stage-actions">${actions}</div>
-    <div class="agent-stage-findings">
-      <section><h4>Что подтверждено</h4><ul>${evidence}</ul></section>
-      ${limitations ? `<section class="limitations"><h4>Что пока нельзя утверждать</h4><ul>${limitations}</ul></section>` : ""}
-    </div>
-  </section>`;
-}
-
-function renderAgentConversation() {
-  const host = $("agent-conversation");
-  if (!host) return;
-  if (!state.agent.history.length) {
-    host.innerHTML = `<div class="agent-empty">Ответ строится только по выбранному снимку. GigaChat формулирует текст, но не добавляет факты без ссылок.</div>`;
-    return;
-  }
-  host.innerHTML = state.agent.history.map((entry) => {
-    const citations = (entry.response?.citations || []).slice(0, 18).map((citation) => {
-      const href = agentCitationHref(citation);
-      const label = `${citation.type || "fact"}: ${citation.label || citation.id || "факт"}`;
-      return `<li>${href ? `<a href="${esc(href)}">${esc(label)}</a>` : esc(label)}${citation.sourceFile ? ` · ${esc(citation.sourceFile)}${citation.sourceLine ? `:${fmt(citation.sourceLine)}` : ""}` : ""}</li>`;
-    }).join("");
-    const mode = entry.response?.mode === "llm" ? "GigaChat по найденным фактам" : "Детерминированный ответ";
-    const stageBrief = entry.response?.stageBrief ? renderAgentStageBrief(entry.response.stageBrief) : "";
-    const answer = stageBrief
-      ? (entry.response?.mode === "llm" ? `<div class="agent-answer agent-synthesis"><b>Вывод GigaChat</b>${esc(entry.response?.answer || "Ответ не получен")}</div>` : "")
-      : `<div class="agent-answer">${esc(entry.response?.answer || "Ответ не получен")}</div>`;
-    return `<article class="agent-message">
-      <div class="question">${esc(entry.question)}</div>
-      <div class="agent-answer-head"><b>${esc(mode)}</b><span>${fmt(entry.response?.citations?.length || 0)} оснований</span></div>
-      ${entry.response?.llmHint ? `<div class="agent-warning">${esc(entry.response.llmHint)}</div>` : ""}
-      ${stageBrief}
-      ${answer}
-      ${citations ? `<details class="ai-evidence"><summary>Проверяемые основания</summary><ul class="agent-citations">${citations}</ul></details>` : `<div class="agent-warning">В ответе нет адресных оснований. Используйте его только как указатель на пробел.</div>`}
-    </article>`;
-  }).join("");
-  const latest = host.lastElementChild;
-  host.scrollTop = latest ? Math.max(0, latest.offsetTop - host.offsetTop) : 0;
-}
-
-async function askProcessAgent(question) {
-  const text = String(question || "").trim();
-  if (!text || state.agent.loading || !state.snapshot?.id) return;
-  const context = selectedAgentContext();
-  state.agent.loading = true;
-  const submit = $("agent-submit");
-  if (submit) {
-    submit.disabled = true;
-    submit.textContent = state.agent.mode === "llm" ? "Спрашиваю GigaChat…" : "Ищу факты…";
-  }
-  try {
-    const response = await api("/api/agent/ask", {
-      method: "POST",
-      body: JSON.stringify({
-        snapshotId: state.snapshot.id,
-        question: text,
-        mode: state.agent.mode,
-        processId: context.processId,
-        contractId: context.contractId,
-        stage: context.stage,
-      }),
-    });
-    state.agent.history.push({ question: text, response });
-    state.agent.history = state.agent.history.slice(-8);
-    const input = $("agent-question");
-    if (input) input.value = "";
-    renderAgentConversation();
-  } catch (error) {
-    state.agent.history.push({
-      question: text,
-      response: { answer: `Не удалось получить ответ: ${error.message}`, citations: [], mode: "facts" },
-    });
-    renderAgentConversation();
-  } finally {
-    state.agent.loading = false;
-    if (submit) {
-      submit.disabled = false;
-      submit.textContent = "Спросить";
-    }
-  }
-}
-
+const agentPanel = globalThis.AIProfilerAgentPanel.create({
+  state,
+  getElement: $,
+  request: api,
+  esc,
+  fmt,
+  fitDiagram: fitSequence,
+});
+const setInspectorTab = agentPanel.setTab;
+const setInspectorCollapsed = agentPanel.setCollapsed;
+const updateAgentContext = agentPanel.updateContext;
+const askProcessAgent = agentPanel.ask;
 function setView(view) {
   const demoViews = new Set(["briefing", "reconstruction", "sequence", "mappings", "gaps"]);
   if (state.demo && !demoViews.has(view)) view = "briefing";
@@ -965,511 +719,45 @@ function renderSequenceQuality(data) {
 function setDiagramMode(mode) {
   state.sequence.diagramMode = mode === "process" ? "process" : "sequence";
   state.sequence.selectedStage = null;
+  state.sequence.mapStage = null;
+  state.sequence.mapView = "overview";
+  state.sequence.mapFlow = "all";
   state.sequence.selectedRegionId = "";
   state.sequence.selectedRelationId = "";
   const params = new URLSearchParams(window.location.search);
   if (state.sequence.diagramMode === "process") params.set("diagram", "process");
   else params.delete("diagram");
   params.delete("mapStage");
+  params.delete("mapView");
+  params.delete("mapFlow");
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
   renderSequenceView();
 }
 
-function updateDiagramModeControls(activeProcess) {
-  const processMode = state.sequence.diagramMode === "process";
-  $("diagram-mode-sequence")?.classList.toggle("active", !processMode);
-  $("diagram-mode-process")?.classList.toggle("active", processMode);
-  $("sequence-title").textContent = processMode
-    ? (activeProcess ? `Карта процесса: ${activeProcess.name}` : "Карта бизнес-процессов")
-    : "Сиквенс межсервисных вызовов";
-  $("sequence-canvas")?.classList.toggle("process-map-canvas", processMode);
-  $("sequence-canvas")?.setAttribute("aria-label", processMode ? "Карта процесса" : "Сиквенс межсервисных вызовов");
-  document.querySelector(".sequence-panel")?.classList.toggle("process-map-active", processMode);
-}
-
-function processMapValue(value) {
-  if (value == null || value === "") return "—";
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.join(", ");
-  try { return JSON.stringify(value); } catch (_error) { return String(value); }
-}
-
-function renderProcessMapChooser() {
-  const canvas = $("sequence-canvas");
-  const detail = $("sequence-detail");
-  const processes = (state.graph?.processes || [])
-    .filter((process) => (process.processIr?.nodes || []).length)
-    .sort((a, b) => Number(b.processIr?.nodes?.length || 0) - Number(a.processIr?.nodes?.length || 0));
-  canvas.innerHTML = `
-    <div class="process-map-picker">
-      <div class="process-map-picker-head">
-        <b>Выберите процесс</b>
-        <span>Карта строится для одной точки входа. Так ветки разных процессов не смешиваются в одну схему.</span>
-      </div>
-      <div class="process-map-picker-grid">
-        ${processes.map((process) => `
-          <button type="button" class="process-map-choice" data-process-id="${esc(process.processId)}">
-            <strong>${esc(process.name)}</strong>
-            <span>${fmt(process.processIr?.nodes?.length || 0)} блоков · ${fmt(process.processIr?.relations?.length || 0)} доказанных переходов</span>
-            <small>${esc(processNarrativeSummary(process.narrative || processClosureLabel(process)))}</small>
-          </button>
-        `).join("") || `<div class="empty">В этом снимке ещё нет processIr для построения карты.</div>`}
-      </div>
-    </div>`;
-  detail.innerHTML = `
-    <h3>Что показывает карта</h3>
-    <p>Это BPMN-alike представление уже найденного процесса: прямоугольники — межсервисные действия, ромбы — доказанные управляющие участки Java-кода, линии — причинные зависимости.</p>
-    <p class="muted">Карта не объявляет объединение статических маршрутов одним production-запуском. Если точный порядок не доказан, это явно останется на схеме и в деталях.</p>`;
-  canvas.querySelectorAll(".process-map-choice").forEach((button) => {
-    button.onclick = () => {
-      const process = processes.find((item) => item.processId === button.dataset.processId);
-      if (process) focusProcess(process);
-    };
-  });
-}
-
-function processMapNodeHtml(call) {
-  const selected = call.id === state.sequence.selectedId ? "selected" : "";
-  if (call.isRegistryBoundary) {
-    const boundary = call.registryBoundary || {};
-    const inbound = boundary.direction === "inbound";
-    const evidence = boundary.evidenceStatus === "code_boundary_and_registry"
-      ? "кодовая граница + Excel"
-      : "ожидаемый вход по Excel";
-    return `
-      <button type="button" class="process-map-node registry-boundary ${selected}"
-        data-call-id="${esc(call.id)}" style="left:${call.processMap.x}px;top:${call.processMap.y}px;width:${call.processMap.width}px;height:${call.processMap.height}px">
-        <span class="process-map-node-head">
-          <b>${inbound ? "Вход" : "Внешняя граница"}</b>
-          <span>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</span>
-        </span>
-        <strong>${esc(call.payload)}</strong>
-        <span class="process-map-node-meta">архитектурный реестр · ${esc(evidence)}</span>
-        <span class="process-map-execution kind-registry">${inbound ? "до точки входа процесса" : "точная позиция в сценарии не доказана"}</span>
-        <span class="process-map-purpose"><i>Бизнес-контур</i>${esc((boundary.businessNames || [])[0] || "Ожидаемое взаимодействие из архитектурного Excel")}</span>
-        <span class="process-map-node-badges">
-          <em>${fmt((boundary.registryRowIds || []).length)} строк Excel</em>
-          <em>${boundary.routeId ? "граница найдена в коде" : "внешний отправитель не загружен"}</em>
-        </span>
-      </button>`;
-  }
-  const synchronous = call.responseSemantics?.isSynchronous || call.responseSemantics?.kind === "reverse_contract";
-  const hasPurpose = Boolean(call.order?.purpose);
-  const purpose = call.order?.purpose || call.order?.reason || "Описание этого действия ещё не рассчитано";
-  const purposeLabel = hasPurpose
-    ? (call.order?.purposeSource !== "deterministic" ? "Зачем (ИИ)" : "Зачем")
-    : (call.order?.reason ? "Почему здесь" : "Описание");
-  const map = call.processMap;
-  const flowKind = call.flowKind || "main";
-  const conditionHtml = call.guardSummary
-    ? `<span class="process-map-condition" title="${esc((call.guardConditions || []).map((item) => `${item.branch === "else" ? "иначе" : "если"} ${item.condition}`).join("; "))}"><i>◇</i>${esc(call.guardSummary)}</span>`
-    : "";
-  return `
-    <button type="button" class="process-map-node tier-${esc(call.tier)} flow-${esc(flowKind)} ${selected}"
-      data-call-id="${esc(call.id)}" style="left:${map.x}px;top:${map.y}px;width:${map.width}px;height:${map.height}px">
-      <span class="process-map-node-head">
-        <b>Шаг ${fmt(call.displayStep || call.order?.step)}</b>
-        <span>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</span>
-      </span>
-      <strong>${esc(call.payload)}</strong>
-      <span class="process-map-node-meta">${esc(transportLabel(call.transport))} · ${synchronous ? "запрос + синхронный ответ" : "передача вперёд"}</span>
-      <span class="process-map-execution kind-${esc(flowKind)}">${esc(call.executionLabel || "порядок не доказан")}</span>
-      ${conditionHtml}
-      <span class="process-map-purpose"><i>${purposeLabel}</i>${esc(purpose)}</span>
-      <span class="process-map-node-badges">
-        <em>${fmt(call.fieldCount)} связей полей</em>
-        <em>${call.order?.readiness ? `готовность ${fmt(call.order.readiness.score)}/100` : esc(tierText(call.tier))}</em>
-      </span>
-    </button>`;
-}
-
-function processMapGatewayHtml(region) {
-  if (region.renderGateway === false) return "";
-  const selected = region.id === state.sequence.selectedRegionId ? "selected" : "";
-  return `
-    <button type="button" class="process-map-gateway kind-${esc(region.kind)} ${selected}"
-      data-region-id="${esc(region.id)}" style="left:${region.x}px;top:${region.y}px"
-      title="${esc(region.label)}: открыть условие и ветки">
-      <span><i>${esc(region.symbol)}</i></span>
-      <small><b>${esc(region.label)}</b><em>${esc(region.scopeLabel || "управление потоком")}</em></small>
-    </button>`;
-}
-
-function processMapRegionFrameHtml(region) {
-  if (!["async_task", "parallel", "exception"].includes(region.kind) || !region.bounds) return "";
-  return `<div class="process-map-region-frame kind-${esc(region.kind)}"
-    style="left:${region.bounds.x}px;top:${region.bounds.y}px;width:${region.bounds.width}px;height:${region.bounds.height}px">
-      <span>${esc(region.frameLabel || region.label)}</span>
-    </div>`;
-}
-
-function renderProcessMapRegionDetail(region, layout) {
-  const groups = region.arms?.length
-    ? region.arms
-    : region.tasks?.length
-      ? region.tasks
-      : region.nodeIds?.length
-        ? [{ label: region.kind === "exception" ? "Вызовы только при обработке ошибки" : "Затронутые вызовы", nodeIds: region.nodeIds }]
-        : [];
-  const sourceName = region.sourceRef || region.filePath || "";
-  const taskSourceLine = groups
-    .map((group) => String(group.taskId || "").match(/:(\d+)$/)?.[1])
-    .find(Boolean);
-  const sourceLine = region.sourceLine || taskSourceLine;
-  const sourceLocation = sourceName
-    ? `${sourceName}${sourceLine ? `:${fmt(sourceLine)}` : ""}`
-    : (sourceLine ? `строка ${fmt(sourceLine)} в методе-владельце` : "—");
-  const groupRows = groups.map((group, index) => {
-    const nodeIds = group.nodeIds || [];
-    const calls = uniq(nodeIds.map((nodeId) => {
-      for (const call of layout.calls) {
-        if ((call.processIr?.nodeIds || []).includes(nodeId)) return call.id;
-      }
-      return "";
-    })).map((callId) => layout.callById.get(callId)).filter(Boolean);
-    return `<li><b>${esc(group.label || group.taskId || `Ветка ${index + 1}`)}</b><span>${calls.map((call) => esc(`${call.sourceLabel} → ${call.targetLabel}`)).join("; ") || "вызовы скрыты текущим фильтром"}</span></li>`;
-  }).join("");
-  $("sequence-detail").innerHTML = `
-    <span class="detail-kicker">УПРАВЛЕНИЕ ПОТОКОМ</span>
-    <h3>${esc(region.label)}</h3>
-    <p>${region.kind === "choice"
-      ? "Ромб показывает взаимоисключающие ветки условия. Подписи у выходов содержат проверку, по которой выбирается ветка."
-      : region.kind === "parallel"
-        ? "Этот блок запускает несколько веток параллельно. Порядок их завершения не утверждается."
-        : region.kind === "async_task"
-          ? "Рамка показывает отдельный асинхронный подпроцесс. Он запускается из исходного потока, но дальше имеет собственный порядок выполнения."
-          : region.kind === "exception"
-            ? "Это обработка исключения или аварийная ветка исходного кода."
-            : "Этот участок кода может повторять вложенные действия."}</p>
-    <div class="kv">
-      <span>Условие</span><b>${esc(processMapValue(region.condition || region.guard))}</b>
-      <span>Смысл области</span><b>${esc(region.scopeLabel || "управление потоком")}</b>
-      <span>Метод-владелец</span><b>${esc(processMapValue(region.ownerMethodId || region.ownerMethod || region.methodId))}</b>
-      <span>Файл / строка</span><b>${esc(sourceLocation)}</b>
-      <span>Объединение веток</span><b>${region.joinProven === true ? "доказано" : region.joinProven === false ? "не доказано" : "не применимо"}</b>
-    </div>
-    <div class="detail-section"><h3>Ветки и задачи</h3><ul class="process-map-branch-list">${groupRows || "<li>Состав региона взят из AST, но отдельные ветки не названы.</li>"}</ul></div>
-    <p class="muted">Источник этого шлюза — управляющая структура AST. ИИ-текст не используется для определения самой развилки.</p>`;
-}
-
-function renderProcessMapRelationDetail(relation, layout) {
-  const from = layout.callById.get(relation.fromCallId);
-  const to = layout.callById.get(relation.toCallId);
-  const registryContext = relation.kind === "registry_context";
-  $("sequence-detail").innerHTML = `
-    <span class="detail-kicker">СВЯЗЬ БЛОКОВ</span>
-    <h3>${esc(from?.targetLabel || from?.sourceLabel)} → ${esc(to?.targetLabel || to?.sourceLabel)}</h3>
-    <p><b>${esc(relation.label)}.</b> ${registryContext
-      ? "Пунктир присоединяет ожидаемую бизнес-границу из Excel к ближайшей доказанной точке кода. Это не доказанный следующий runtime-шаг: без найденного исходящего вызова нельзя утверждать, что внешнее продолжение начинается сразу после этой карточки."
-      : relation.kind === "async_handoff"
-        ? "Сообщение или задача передаётся в новый поток выполнения. Пунктир не означает синхронный вызов и не обещает немедленный старт получателя."
-        : relation.kind === "async_spawn"
-          ? "Код запускает отдельную асинхронную задачу. Между блоками доказан запуск, но не общий стек вызовов."
-          : relation.kind === "parallel_join"
-            ? "Продолжение начинается после точки объединения параллельных ветвей. Порядок завершения самих ветвей не задаётся."
-            : relation.kind === "completion_callback"
-              ? "Это callback завершения асинхронной операции. Он срабатывает после результата или ошибки, а не как обычный следующий вызов."
-              : relation.kind === "synchronous_continuation"
-        ? "Следующий блок достигается после синхронного возврата или в том же доказанном пути исполнения."
-        : relation.kind === "causal_continuation"
-          ? "Доказано, что результат или управление предыдущего действия нужен следующему."
-          : "AST и путь вызовов подтверждают отношение «раньше → позже», но линия не равна времени production-трассы."}</p>
-    <div class="kv">
-      <span>Откуда</span><b>${esc(from ? `${from.sourceLabel} → ${from.targetLabel}` : relation.fromCallId)}</b>
-      <span>Куда</span><b>${esc(to ? `${to.sourceLabel} → ${to.targetLabel}` : relation.toCallId)}</b>
-      <span>Тип</span><b>${esc(relation.kind || "ordered_before")}</b>
-      <span>Основание</span><b>${esc(processMapValue(relation.reason || relation.evidence || relation.sourceRef))}</b>
-    </div>
-    <p class="muted">${registryContext
-      ? "Подпись «ожидается у шага N · Excel» означает точку сопоставления с реестром, а не установленный порядок исполнения. Нажмите на пунктирный прямоугольник, чтобы увидеть строки Excel и наличие или отсутствие кодовой границы."
-      : "Нажмите на прямоугольник, чтобы открыть транспорт, DTO, поля, ответ и ссылки на Excel-маппинг."}</p>`;
-}
-
-function renderProcessRegistryBoundaryDetail(call) {
-  const boundary = call.registryBoundary || {};
-  const refs = (boundary.sourceRefs || []).map((ref) => `
-    <li><b>${esc(ref.sheet || "лист")}, строка ${fmt(ref.row || "—")}</b><span>${esc(ref.file || "")}</span></li>`).join("");
-  const names = (boundary.businessNames || []).map((value) => `<li>${esc(value)}</li>`).join("");
-  const points = (boundary.businessPoints || []).map((value) => `<span>${esc(value)}</span>`).join("");
-  const codeBacked = boundary.evidenceStatus === "code_boundary_and_registry";
-  $("sequence-detail").innerHTML = `
-    <span class="detail-kicker">АРХИТЕКТУРНАЯ ГРАНИЦА</span>
-    <h3>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</h3>
-    <p>${codeBacked
-      ? "Анализатор нашёл исходящий вызов в коде, но код ресивера не загружен. Архитектурный Excel называет внешний компонент и бизнес-взаимодействие, поэтому граница показана в процессе без выдуманного внутреннего продолжения."
-      : "Архитектурный Excel описывает ожидаемый вход в этот процесс. Загруженный корпус подтверждает саму точку входа сервиса, но код внешнего отправителя отсутствует."}</p>
-    <div class="kv">
-      <span>Статус</span><b>${codeBacked ? "граница в коде + строка Excel" : "точка входа процесса + строка Excel"}</b>
-      <span>Направление</span><b>${boundary.direction === "inbound" ? "вход из внешнего контура" : "выход во внешний контур"}</b>
-      <span>Внешний компонент</span><b>${esc(boundary.externalComponent || "не назван")}</b>
-      <span>Внешняя система</span><b>${esc(boundary.externalSystem || "не названа")}</b>
-      <span>Внутренний сервис</span><b>${esc(boundary.internalService || "—")}</b>
-      <span>Транспорт</span><b>${esc(transportLabel(boundary.transport || "architecture_registry"))}</b>
-      <span>Адрес / канал</span><b>${esc(boundary.transportAddress || "не разрешён")}</b>
-      <span>Кодовая граница</span><b>${esc(boundary.sourceExitId || "для входа не применимо")}</b>
-      <span>Код</span><b>${esc(boundary.sourceFile ? `${boundary.sourceFile}${boundary.sourceLine ? `:${boundary.sourceLine}` : ""}` : "код внешней стороны не загружен")}</b>
-      <span>Порядок</span><b>${codeBacked ? "граница найдена; позиция относительно шагов не доказана" : "до точки входа; задан направлением Excel"}</b>
-    </div>
-    <div class="detail-section"><h3>Как взаимодействие называется в Excel</h3><ul class="process-map-branch-list">${names || "<li>Название не заполнено.</li>"}</ul></div>
-    <div class="detail-section"><h3>Точки взаимодействия</h3><div class="chips">${points || "<span>не заполнены</span>"}</div></div>
-    <div class="detail-section"><h3>Ссылки на архитектурный реестр</h3><ul class="process-map-branch-list">${refs || "<li>Ссылка на строку не сохранена.</li>"}</ul></div>
-    <p class="muted">Внешние карточки образуют отдельный контур, как участники вне pool в BPMN. Они не соединяются со случайным внутренним шагом, пока анализатор не докажет относительный порядок по control flow.</p>`;
-}
-
-function processMapStageFacts(stage, layout) {
-  const calls = (stage.callIds || []).map((callId) => layout.callById.get(callId)).filter(Boolean);
-  const services = uniq(calls.flatMap((call) => [call.sourceLabel, call.targetLabel]));
-  const payloads = uniq(calls.map((call) => call.payload).filter((value) => value && value !== "none"));
-  const purposes = uniq(calls
-    .filter((call) => call.order?.purpose && call.order?.purposeSource !== "deterministic")
-    .map((call) => call.order.purpose));
-  const aiPurposeCount = calls.filter((call) => (
-    call.order?.purpose && call.order?.purposeSource !== "deterministic"
-  )).length;
-  const scores = calls
-    .map((call) => Number(call.order?.readiness?.score))
-    .filter(Number.isFinite);
-  const memberIds = new Set(calls.map((call) => call.id));
-  const regions = layout.regions.filter((region) => (
-    (region.memberCallIds || []).some((callId) => memberIds.has(callId))
-  ));
-  return {
-    calls,
-    services,
-    payloads,
-    purposes,
-    aiPurposeCount,
-    regions,
-    fieldCount: calls.reduce((sum, call) => sum + Number(call.fieldCount || 0), 0),
-    synchronousCount: calls.filter((call) => (
-      call.responseSemantics?.isSynchronous || call.responseSemantics?.kind === "reverse_contract"
-    )).length,
-    readiness: scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null,
-  };
-}
-
-function renderProcessMapStageDetail(stage, layout, process) {
-  const facts = processMapStageFacts(stage, layout);
-  const registryStage = stage.isRegistryBoundary === true;
-  const rawStepCount = (process?.steps || []).filter((step) => (
-    Number(step.stage ?? 1) === Number(stage.stage)
-  )).length;
-  const collapsedStepCount = Math.max(0, rawStepCount - facts.calls.length);
-  const sourceServices = uniq(facts.calls.map((call) => call.sourceLabel));
-  const targetServices = uniq(facts.calls.map((call) => call.targetLabel));
-  const actionSummary = registryStage
-    ? `${stage.label} связывает загруженный код с участниками, указанными в архитектурном Excel; границ на карте: ${fmt(facts.calls.length)}.`
-    : sourceServices.length === 1
-    ? `${sourceServices[0]} выполняет действия к сервисам ${targetServices.join(", ")}; на карте показано ${fmt(facts.calls.length)} вхождений в пути исполнения.`
-    : `Этап связывает сервисы ${facts.services.join(", ")}; на карте показано ${fmt(facts.calls.length)} вхождений в пути исполнения.`;
-  const responseSummary = registryStage
-    ? "Эти границы показывают бизнес-контур процесса. Наличие ответа и его поля считаются доказанными только когда они подтверждены загруженным кодом."
-    : facts.synchronousCount
-    ? `Синхронный ответ доказан для ${fmt(facts.synchronousCount)} из ${fmt(facts.calls.length)} показанных блоков и может использоваться дальше вызывающим кодом.`
-    : "Синхронный возврат на этом этапе не доказан.";
-  const controlSummary = registryStage
-    ? "Колонка не подменяет внутренний порядок исполнения: Excel задаёт участника и направление, а привязка к процессу отдельно проверяется по точке входа или исходящему вызову в коде."
-    : facts.regions.length
-    ? `Управление ограничено конструкциями: ${facts.regions.map((region) => region.label.toLowerCase()).join(", ")}.`
-    : "Отдельная развилка или асинхронная задача для этапа не выделена.";
-  const purposeRows = facts.purposes.map((purpose) => `<li>${esc(purpose)}</li>`).join("");
-  const regionRows = facts.regions.map((region) => `<span>${esc(region.label)}</span>`).join("");
-  const callRows = facts.calls.map((call) => `
-    <button type="button" class="process-map-stage-call" data-stage-call-id="${esc(call.id)}">
-      <b>${registryStage ? (call.registryBoundary?.direction === "inbound" ? "Вход" : "Внешний выход") : `Шаг ${fmt(call.displayStep || call.order?.step)}`}</b>
-      <span>${esc(call.sourceLabel)} → ${esc(call.targetLabel)}</span>
-      <small>${esc(call.executionLabel || call.payload || "позиция не доказана")}</small>
-    </button>`).join("");
-  const purposeSource = registryStage
-    ? "Названия и назначение взяты из архитектурного Excel; техническая привязка показана отдельно в карточке каждой границы."
-    : facts.aiPurposeCount
-    ? `${fmt(facts.aiPurposeCount)} сохранённых ИИ-объяснений; остальные формулировки взяты из доказанного порядка и причин попадания в процесс.`
-    : "Назначение обобщено детерминированно по действиям и доказанным переходам этапа.";
-  $("sequence-detail").innerHTML = `
-    <span class="detail-kicker">${registryStage ? "АРХИТЕКТУРНЫЙ КОНТУР" : "ЭТАП ПРОЦЕССА"}</span>
-    <h3>${esc(registryStage ? stage.label : `Этап ${fmt(stage.stage)}`)}</h3>
-    <p>${esc(`${actionSummary} ${responseSummary} ${controlSummary}`)}</p>
-    <div class="kv">
-      <span>Показанных блоков</span><b>${fmt(facts.calls.length)}</b>
-      <span>${registryStage ? "Границ из Excel" : "Исходных шагов"}</span><b>${fmt(registryStage ? facts.calls.length : (rawStepCount || facts.calls.length))}${!registryStage && collapsedStepCount ? ` · ${fmt(collapsedStepCount)} вариантов схлопнуто` : ""}</b>
-      <span>Сервисов</span><b>${fmt(facts.services.length)} · ${esc(facts.services.join(", ") || "—")}</b>
-      <span>Моделей</span><b>${esc(facts.payloads.join(", ") || "не определены")}</b>
-      <span>Связей полей</span><b>${fmt(facts.fieldCount)}</b>
-      <span>Синхронных ответов</span><b>${fmt(facts.synchronousCount)}</b>
-      <span>Средняя готовность</span><b>${facts.readiness == null ? "—" : `${fmt(Math.round(facts.readiness * 10) / 10)}/100`}</b>
-    </div>
-    <div class="detail-section">
-      <h3>${registryStage ? "Зачем нужна эта граница" : "Зачем нужен этап"}</h3>
-      ${purposeRows ? `<ul class="process-map-stage-purpose">${purposeRows}</ul>` : `<p class="muted">Сохранённого ИИ-объяснения этапа пока нет. Доступное выше описание построено из действий и управляющих конструкций без домысливания бизнес-смысла.</p>`}
-      <p class="muted">${esc(purposeSource)}</p>
-      <button type="button" class="mini-btn wide" id="stage-ask-agent">Уточнить у AI по этому этапу</button>
-    </div>
-    ${regionRows ? `<div class="detail-section"><h3>Управление потоком</h3><div class="process-map-stage-regions">${regionRows}</div></div>` : ""}
-    <div class="detail-section"><h3>${registryStage ? "Границы контура" : "Действия этапа"}</h3><div class="process-map-stage-calls">${callRows}</div></div>`;
-  $("sequence-detail").querySelectorAll("[data-stage-call-id]").forEach((button) => {
-    button.onclick = () => {
-      state.sequence.selectedStage = null;
-      state.sequence.selectedId = button.dataset.stageCallId || "";
-      const call = layout.callById.get(state.sequence.selectedId);
-      const params = new URLSearchParams(window.location.search);
-      params.delete("mapStage");
-      if (call?.order?.step) params.set("step", call.order.step);
-      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-      renderSequenceView();
-    };
-  });
-  $("stage-ask-agent")?.addEventListener("click", () => {
-    setInspectorTab("agent");
-    const input = $("agent-question");
-    if (input) {
-      input.value = registryStage
-        ? `Что означает ${stage.label.toLowerCase()}, как каждая граница связана с кодом и какими строками архитектурного Excel это подтверждено?`
-        : `Зачем нужен этап ${stage.stage}, что в нём происходит и какими фактами это подтверждено?`;
-      input.focus();
-    }
-    updateAgentContext();
-  });
-}
-
-function renderProcessMapDetail(layout, process) {
-  const stage = state.sequence.selectedStage == null
-    ? null
-    : layout.stages.find((item) => Number(item.stage) === Number(state.sequence.selectedStage));
-  if (stage) {
-    renderProcessMapStageDetail(stage, layout, process);
-    return;
-  }
-  const region = layout.regions.find((item) => item.id === state.sequence.selectedRegionId);
-  if (region) {
-    renderProcessMapRegionDetail(region, layout);
-    return;
-  }
-  const relation = layout.relations.find((item) => item.id === state.sequence.selectedRelationId);
-  if (relation) {
-    renderProcessMapRelationDetail(relation, layout);
-    return;
-  }
-  const call = layout.callById.get(state.sequence.selectedId);
-  if (call?.isRegistryBoundary) {
-    renderProcessRegistryBoundaryDetail(call);
-    return;
-  }
-  renderSequenceDetail();
-}
-
-function renderProcessMapView(activeProcess, sequenceData) {
-  if (!activeProcess) {
-    state.sequence.processMapData = null;
-    renderProcessMapChooser();
-    return;
-  }
-  const layout = window.AIProfilerProcessMap?.build(activeProcess, sequenceData.calls);
-  state.sequence.processMapData = layout;
-  if (!layout?.calls?.length) {
-    $("sequence-canvas").innerHTML = `<div class="empty">После текущих фильтров в процессе не осталось блоков. Отключите «только уверенные» или очистите фильтр.</div>`;
-    $("sequence-detail").innerHTML = `<div class="empty">Карта не дорисовывает скрытые или неподтверждённые вызовы.</div>`;
-    return;
-  }
-  if (!layout.stages.some((stage) => Number(stage.stage) === Number(state.sequence.selectedStage))) {
-    state.sequence.selectedStage = null;
-  }
-  if (state.sequence.selectedStage) {
-    state.sequence.selectedId = "";
-  } else if (!state.sequence.selectedId || !layout.callById.has(state.sequence.selectedId)) {
-    state.sequence.selectedId = layout.calls[0].id;
-  }
-  updateAgentContext();
-  const zoom = state.sequence.zoom;
-  const edgeSvg = layout.relations.map((relation) => {
-    const from = layout.callById.get(relation.fromCallId);
-    const to = layout.callById.get(relation.toCallId);
-    if (!from || !to) return "";
-    if (relation.renderMode === "registry_reference") return "";
-    const route = window.AIProfilerProcessMap.edgeRoute(from, to, relation);
-    const path = route.path;
-    const selected = relation.id === state.sequence.selectedRelationId ? "selected" : "";
-    const routeLabelWidth = Number(relation.routeLabelWidth || 47);
-    const routeLabel = relation.showRouteLabel
-      ? `<g class="process-map-edge-label ${relation.kind === "registry_context" ? "registry" : ""}" transform="translate(${route.labelX} ${route.labelY})">
-          <rect x="-3" y="-12" width="${routeLabelWidth}" height="18" rx="4"></rect>
-          <text x="4" y="1">${esc(relation.routeLabel)}</text>
-        </g>`
-      : "";
-    return `<g class="process-map-relation ${esc(relation.cssClass)} ${selected}">
-      <path class="process-map-edge" d="${path}" marker-end="url(#process-arrow)" />
-      <path class="process-map-edge-hit" data-relation-id="${esc(relation.id)}" d="${path}"><title>${esc(relation.label)}</title></path>
-      ${Number.isFinite(route.startX) ? `<circle class="process-map-port source" cx="${route.startX}" cy="${route.startY}" r="3"></circle>` : ""}
-      ${Number.isFinite(route.endX) ? `<circle class="process-map-port target" cx="${route.endX}" cy="${route.endY}" r="3"></circle>` : ""}
-      ${routeLabel}
-    </g>`;
-  }).join("");
-  const controlSvg = layout.regions.flatMap((region) => region.links.map((link) => {
-    const target = layout.callById.get(link.targetCallId);
-    if (!target) return "";
-    const width = Math.min(176, Math.max(54, String(link.label || "ветка").length * 5.6 + 14));
-    const route = window.AIProfilerProcessMap.controlRoute(region, target, { ...link, labelWidth: width });
-    return `<g class="process-map-control-group kind-${esc(region.kind)}">
-      <path class="process-map-control-link kind-${esc(region.kind)}" d="${route.path}"><title>${esc(region.label)} · ${esc(link.label)}</title></path>
-      <g class="process-map-control-label" transform="translate(${route.labelX} ${route.labelY})">
-        <rect x="0" y="-12" width="${width}" height="18" rx="4"></rect>
-        <text x="6" y="1">${esc(link.label || "ветка")}</text>
-      </g>
-    </g>`;
-  })).join("");
-  const startEdges = layout.start.targetCallIds.map((callId) => {
-    const call = layout.callById.get(callId);
-    return call ? `<path class="process-map-edge" d="M ${layout.start.x + 16} ${layout.start.y} H ${call.processMap.x}" marker-end="url(#process-arrow)" />` : "";
-  }).join("");
-  const endPoints = layout.end.points || layout.end.sourceCallIds.map((callId) => ({
-    sourceCallId: callId,
-    x: layout.end.x,
-    y: layout.end.y,
-    kind: "end",
-    label: "Конец",
-  }));
-  const endEdges = endPoints.map((point) => {
-    const call = layout.callById.get(point.sourceCallId);
-    const external = point.kind === "external_boundary" ? "external" : "";
-    return call ? `<path class="process-map-edge process-map-terminal-edge ${external}" d="M ${call.processMap.x + call.processMap.width} ${call.processMap.y + call.processMap.height / 2} H ${point.x - 16}" marker-end="url(#process-arrow)" />` : "";
-  }).join("");
-  $("sequence-canvas").innerHTML = `
-    <div class="process-map-notice ${layout.runtimeTraceSafe ? "trace-safe" : "path-union"}">
-      <b>${layout.runtimeTraceSafe ? "Карта ограничений исполнения" : "Карта возможных путей"}</b>
-      <span>${layout.runtimeTraceSafe
-        ? "Линии показывают доказанные зависимости; параллельные ветки не сортируются по времени завершения."
-        : "Схема объединяет альтернативные статические маршруты и не выдаёт их за один production-запуск."}</span>
-      ${layout.unsequencedCount ? `<em>${fmt(layout.unsequencedCount)} блоков без доказанной позиции</em>` : ""}
-    </div>
-    <div class="process-map-legend">
-      <span><i class="legend-task"></i> действие сервиса</span>
-      <span><i class="legend-gateway"></i> развилка / объединение</span>
-      <span><i class="legend-condition"></i> условие выполнения блока</span>
-      <span><i class="legend-async-region"></i> асинхронный подпроцесс</span>
-      <span><i class="legend-error-region"></i> только при ошибке</span>
-      <span title="Линию можно выбрать и открыть её основание"><i class="legend-flow"></i> доказанный переход · линия кликабельна</span>
-      <span><i class="legend-async"></i> запуск / передача в другой поток</span>
-      <span title="Внешний участник известен из реестра, но его позиция относительно шагов показывается только при доказанном control flow"><i class="legend-registry"></i> внешний контур из Excel · порядок отдельно</span>
-      <span title="ИИ-текст показывается только когда у него есть сохранённые основания; иначе карточка объясняет детерминированную причину попадания шага в процесс">Зачем (ИИ) / Почему здесь</span>
-    </div>
-    <div class="process-map-stage" style="width:${layout.width * zoom}px;height:${layout.height * zoom}px">
-      <div class="process-map-world" style="width:${layout.width}px;height:${layout.height}px;transform:scale(${zoom})">
-        ${layout.stages.map((stage) => `<div class="process-map-stage-band ${stage.isRegistryBoundary ? "registry-boundary" : ""}" style="left:${stage.x}px;width:${stage.width}px"></div>`).join("")}
-        ${layout.stages.map((stage) => `<button type="button" class="process-map-stage-header ${stage.isRegistryBoundary ? "registry-boundary" : ""} ${Number(stage.stage) === Number(state.sequence.selectedStage) ? "selected" : ""}" data-map-stage="${fmt(stage.stage)}" style="left:${stage.x + 8}px;width:${Math.max(150, stage.width - 16)}px" title="Открыть описание ${esc(stage.label || `этапа ${stage.stage}`)}"><b>${esc(stage.label || `Этап ${stage.stage}`)}</b><span>${esc(stage.callCountLabel || `${fmt(stage.callCount)} ${pluralRu(stage.callCount, "действие", "действия", "действий")}`)} · ${esc(stage.executionSummary || "порядок по коду")}</span></button>`).join("")}
-        ${layout.regions.map(processMapRegionFrameHtml).join("")}
-        <svg class="process-map-svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" aria-label="Связи карты процесса">
-          <defs><marker id="process-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs>
-          ${startEdges}${edgeSvg}${endEdges}${controlSvg}
-        </svg>
-        <div class="process-map-event start" style="left:${layout.start.x - 16}px;top:${layout.start.y - 16}px" title="Точка входа процесса"><span>Старт</span></div>
-        ${endPoints.map((point) => `<div class="process-map-event ${point.kind === "external_boundary" ? "external-boundary" : point.kind === "exception_end" ? "exception-end" : "end"}" style="left:${point.x - 16}px;top:${point.y - 16}px" title="${point.kind === "external_boundary" ? "Продолжение уходит за границу загруженного кода" : point.kind === "exception_end" ? "Аварийная ветка завершается после обработки исключения" : "Наблюдаемый конец этой ветки"}"><span>${esc(point.label)}</span></div>`).join("")}
-        ${layout.calls.map(processMapNodeHtml).join("")}
-        ${layout.regions.map(processMapGatewayHtml).join("")}
-      </div>
-    </div>`;
-  bindSequenceCanvasInteractions();
-  renderProcessMapDetail(layout, activeProcess);
-}
-
+const processMapController = globalThis.AIProfilerProcessMapController.create({
+  state,
+  getElement: $,
+  esc,
+  fmt,
+  pluralRu,
+  uniq,
+  hasNumericValue,
+  processNarrativeSummary,
+  processClosureLabel,
+  transportLabel: globalThis.AIProfilerLabels.transport,
+  tierText,
+  focusProcess,
+  renderSequenceView,
+  renderSequenceDetail,
+  bindSequenceCanvasInteractions,
+  fitSequence,
+  setInspectorTab,
+  updateAgentContext,
+});
+const setProcessMapView = processMapController.setView;
+const setProcessMapFlow = processMapController.setFlow;
+const updateDiagramModeControls = processMapController.updateModeControls;
+const renderProcessMapView = processMapController.renderView;
 function renderSequenceView() {
   const canvas = $("sequence-canvas");
   if (!state.graph) {
@@ -1506,9 +794,11 @@ function renderSequenceView() {
     activeProcess
       ? `<b>процесс: ${esc(activeProcess.name)}</b> <span class="badge ${processCorpusClosed(activeProcess) ? "proof-proven" : "warn"}">${esc(processClosureLabel(activeProcess))}</span> <a href="#" id="seq-clear-process">× сбросить</a>`
       : "↔ = ответ реально возвращается вызывающему (синхронный HTTP или встречный канал)",
-  ].join(" · ")
-    + (activeProcess?.processIr ? `
-      <div class="process-ir-summary ${activeProcess.processIr.runtimeTraceSafe ? "trace-safe" : "path-union"}">
+  ].join(" · ");
+  const contextSections = [];
+  if (activeProcess?.processIr) {
+    contextSections.push(`
+      <section class="process-ir-summary ${activeProcess.processIr.runtimeTraceSafe ? "trace-safe" : "path-union"}">
         <b>${activeProcess.processIr.runtimeTraceSafe && activeProcess.isSingleExecutionPath
           ? "Порядок шагов можно читать как одну трассу выполнения."
           : activeProcess.processIr.runtimeTraceSafe
@@ -1519,24 +809,32 @@ function renderSequenceView() {
         <span>асинхронные задачи: ${fmt(activeProcess.processIr.summary?.asyncTaskRegionCount || 0)}</span>
         <span>циклы: ${fmt(activeProcess.processIr.summary?.loopRegionCount || 0)}</span>
         <span>без доказанной позиции: ${fmt(activeProcess.processIr.summary?.unsequencedNodeCount || 0)}</span>
-      </div>` : "")
-    + (activeProcess?.narrative ? `
-      <div class="process-narrative">
-        <b>${activeProcess.narrativeSource === "curated_registry" ? "Курируемое объяснение по коду и реестру ИВ:" : "Объяснение ИИ по фактам кода:"}</b> ${esc(processNarrativeSummary(activeProcess.narrative))}
-        <span class="muted">Оснований: ${fmt(activeProcess.narrativeCitations?.length || 0)}.</span>
+      </section>`);
+  }
+  if (activeProcess?.narrative) {
+    contextSections.push(`
+      <section class="process-context-card process-narrative">
+        <div class="process-context-head">
+          <b>${activeProcess.narrativeSource === "curated_registry" ? "Объяснение по коду и реестру ИВ" : "Объяснение по фактам кода"}</b>
+          <span>${fmt(activeProcess.narrativeCitations?.length || 0)} оснований</span>
+        </div>
+        <p>${esc(processNarrativeSummary(activeProcess.narrative))}</p>
         ${activeProcess.narrativeGaps?.length ? `<details class="ai-evidence">
           <summary>Незакрытые выходы: ${fmt(activeProcess.narrativeGaps.length)}</summary>
           <ul>${activeProcess.narrativeGaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>
         </details>` : ""}
-      </div>` : "");
+      </section>`);
+  }
   const gapResearch = activeProcess?.unresolvedBoundaryResearch || [];
   if (gapResearch.length) {
-    $("sequence-summary").insertAdjacentHTML("beforeend", `
-      <div class="process-narrative">
-        <b>Что ИИ проверил в исходном коде:</b>
-        ${fmt(gapResearch.filter((item) => item.codeEvidenceVerified).length)} из ${fmt(gapResearch.length)} незакрытых физических выходов.
+    contextSections.push(`
+      <section class="process-context-card process-gap-research">
+        <div class="process-context-head">
+          <b>Проверка незакрытых физических выходов</b>
+          <span>${fmt(gapResearch.filter((item) => item.codeEvidenceVerified).length)} из ${fmt(gapResearch.length)} проверено по коду</span>
+        </div>
         <details class="ai-evidence">
-          <summary>Показать результаты чтения кода</summary>
+          <summary>Результаты чтения кода · ${fmt(gapResearch.length)}</summary>
           <ul>${gapResearch.map((item) => `
             <li>
               <b>${esc(processResearchClassificationLabel(item.classification))}.</b>
@@ -1546,9 +844,9 @@ function renderSequenceView() {
             </li>
           `).join("")}</ul>
         </details>
-      </div>
-    `);
+      </section>`);
   }
+  $("sequence-context").innerHTML = contextSections.join("");
   const clearLink = $("seq-clear-process");
   if (clearLink) clearLink.onclick = (event) => { event.preventDefault(); clearProcessFocus(); };
   renderSequenceQuality(data);
@@ -2115,7 +1413,7 @@ function bindSequenceCanvasInteractions() {
   };
   canvas.onmouseleave = canvas.onmouseup;
   canvas.onwheel = (event) => {
-    if (event.target.closest(".process-map-picker")) return;
+    if (event.target.closest(".process-map-picker, .process-map-controls")) return;
     if (state.sequence.diagramMode === "process" && !state.sequence.processId) return;
     event.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -2147,24 +1445,34 @@ function bindSequenceCanvasInteractions() {
       renderSequenceView();
     };
   });
+  canvas.querySelectorAll("[data-map-view]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      setProcessMapView(el.dataset.mapView || "overview");
+    };
+  });
+  canvas.querySelectorAll("[data-map-flow]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      setProcessMapFlow(el.dataset.mapFlow || "all");
+    };
+  });
+  canvas.querySelectorAll("[data-stage-summary]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      const stage = Number(el.dataset.stageSummary);
+      if (Number.isFinite(stage)) setProcessMapView("stage", stage);
+    };
+  });
   canvas.querySelectorAll(".process-map-stage-header").forEach((el) => {
     el.onclick = (event) => {
       event.stopPropagation();
       setInspectorTab("detail");
       const selectedStage = Number(el.dataset.mapStage);
-      state.sequence.selectedStage = Number.isFinite(selectedStage) ? selectedStage : null;
-      state.sequence.selectedId = "";
-      state.sequence.selectedRegionId = "";
-      state.sequence.selectedRelationId = "";
-      const params = new URLSearchParams(window.location.search);
-      if (state.sequence.selectedStage != null) params.set("mapStage", state.sequence.selectedStage);
-      else params.delete("mapStage");
-      params.delete("step");
-      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-      renderSequenceView();
+      if (Number.isFinite(selectedStage)) setProcessMapView("stage", selectedStage);
     };
   });
-  canvas.querySelectorAll(".process-map-node").forEach((el) => {
+  canvas.querySelectorAll(".process-map-node:not([data-stage-summary])").forEach((el) => {
     el.onclick = (event) => {
       event.stopPropagation();
       setInspectorTab("detail");
@@ -2174,14 +1482,14 @@ function bindSequenceCanvasInteractions() {
       state.sequence.selectedRelationId = "";
       const selectedCall = state.sequence.processMapData?.callById?.get(state.sequence.selectedId);
       const params = new URLSearchParams(window.location.search);
-      params.delete("mapStage");
+      if (state.sequence.mapView !== "stage") params.delete("mapStage");
       if (selectedCall?.order?.step) params.set("step", selectedCall.order.step);
       else params.delete("step");
       window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
       renderSequenceView();
     };
   });
-  canvas.querySelectorAll(".process-map-gateway").forEach((el) => {
+  canvas.querySelectorAll(".process-map-gateway, .process-map-region-frame").forEach((el) => {
     el.onclick = (event) => {
       event.stopPropagation();
       setInspectorTab("detail");
@@ -2189,7 +1497,7 @@ function bindSequenceCanvasInteractions() {
       state.sequence.selectedRegionId = el.dataset.regionId || "";
       state.sequence.selectedRelationId = "";
       const params = new URLSearchParams(window.location.search);
-      params.delete("mapStage");
+      if (state.sequence.mapView !== "stage") params.delete("mapStage");
       params.delete("step");
       window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
       renderSequenceView();
@@ -2203,7 +1511,7 @@ function bindSequenceCanvasInteractions() {
       state.sequence.selectedRelationId = el.dataset.relationId || "";
       state.sequence.selectedRegionId = "";
       const params = new URLSearchParams(window.location.search);
-      params.delete("mapStage");
+      if (state.sequence.mapView !== "stage") params.delete("mapStage");
       params.delete("step");
       window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
       renderSequenceView();
@@ -2233,14 +1541,42 @@ function setSequenceZoom(value, anchor = null) {
   }
 }
 
-function fitSequence() {
+function focusProcessMapViewport(layout) {
+  const canvas = $("sequence-canvas");
+  if (!canvas || state.sequence.diagramMode !== "process") return;
+  canvas.scrollTop = 0;
+  if (layout?.viewMode !== "stage") {
+    canvas.scrollLeft = 0;
+    return;
+  }
+  const selectedStage = canvas.querySelector(".process-map-stage-band.selected");
+  if (!selectedStage) {
+    canvas.scrollLeft = 0;
+    return;
+  }
+  const canvasRect = canvas.getBoundingClientRect();
+  const stageRect = selectedStage.getBoundingClientRect();
+  const stageLeft = stageRect.left - canvasRect.left + canvas.scrollLeft;
+  const viewportWidth = canvas.clientWidth;
+  const nextLeft = stageRect.width > viewportWidth - 64
+    ? stageLeft - 24
+    : stageLeft - (viewportWidth - stageRect.width) / 2;
+  canvas.scrollLeft = Math.max(0, nextLeft);
+}
+
+function fitSequence(options = {}) {
   const canvas = $("sequence-canvas");
   if (state.sequence.diagramMode === "process") {
     const layout = state.sequence.processMapData;
     if (!canvas || !layout?.width) return;
     const horizontal = (canvas.clientWidth - 28) / layout.width;
     const vertical = (canvas.clientHeight - 96) / layout.height;
-    setSequenceZoom(Math.min(horizontal, vertical, 1.2));
+    let target = Math.min(horizontal, vertical, 1.2);
+    if (options?.readable === true && layout.viewMode !== "diagnostic") {
+      target = Math.max(target, layout.viewMode === "overview" ? 0.72 : 0.68);
+    }
+    setSequenceZoom(target);
+    requestAnimationFrame(() => focusProcessMapViewport(state.sequence.processMapData));
     return;
   }
   const unscaled = buildSequenceData(1);
@@ -2369,6 +1705,9 @@ function buildProcessMapExportReport(process, layout) {
   const report = {
     width: layout.width,
     height: layout.height,
+    presentationMode: layout.viewMode || state.sequence.mapView,
+    flowFilter: layout.flowFilter || state.sequence.mapFlow,
+    selectedStage: layout.selectedStage ?? state.sequence.mapStage,
     runtimeTraceSafe: layout.runtimeTraceSafe,
     unsequencedCount: layout.unsequencedCount,
     stages: layout.stages,
@@ -2468,7 +1807,12 @@ async function exportProcessMap(kind) {
   }
   let data = buildSequenceData(1);
   if (["html", "package"].includes(kind)) data = await hydrateSequenceExportContracts(data);
-  const layout = window.AIProfilerProcessMap?.build(process, data.calls);
+  const fullLayout = window.AIProfilerProcessMap?.build(process, data.calls);
+  const layout = window.AIProfilerProcessMapPresentation?.build(fullLayout, {
+    viewMode: state.sequence.mapView,
+    flowFilter: state.sequence.mapFlow,
+    selectedStage: state.sequence.mapStage,
+  }) || fullLayout;
   if (!layout?.calls?.length) {
     showError(new Error("В карте нет блоков под текущим фильтром."));
     return;
@@ -2477,7 +1821,8 @@ async function exportProcessMap(kind) {
   if (kind === "package") report = prepareExportAssetLinks(report);
   const safeName = String(process.name || process.processId || "process")
     .replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]+/g, "_");
-  const base = `process_map_${state.snapshot?.name || "snapshot"}_${safeName}`;
+  const presentationSuffix = `${layout.viewMode || "diagnostic"}_${layout.flowFilter || "all"}`;
+  const base = `process_map_${state.snapshot?.name || "snapshot"}_${safeName}_${presentationSuffix}`;
   if (kind === "json") {
     return download(`${base}.json`, new Blob([JSON.stringify({ snapshot: state.snapshot, process, report }, null, 2)], { type: "application/json;charset=utf-8" }));
   }
@@ -3070,7 +2415,6 @@ function renderBriefing() {
       <section class="brief-section"><h3>Меж-ФП цепочки</h3><p>${fmt(processes.crossFp)} цепочек пересекают границу ФП; замкнутых среди них — ${fmt(processes.crossFpClosed)}. ${esc(data.verdict?.cannotClaim)}</p><div class="table-wrap"><table class="table"><thead><tr><th>Точка старта</th><th>ФП</th><th>Шаги</th><th>Состояние</th></tr></thead><tbody>${processRows}</tbody></table></div></section>
       <section class="brief-section"><h3>Почему ${fmt(cross.variantCount)} меж-ФП вариантов — не число реальных вызовов</h3><p>${esc(boundaries.explanation)}</p><p>${esc(data.quality?.note)}</p></section>
       <section class="brief-section"><h3>Что говорить на созвоне</h3><ol class="brief-talk">${(data.talkTrack || []).map((item) => `<li>${esc(item)}</li>`).join("")}</ol></section>
-      <section class="brief-section"><h3>Термины человеческим языком</h3><div class="brief-defs">${(data.definitions || []).map((item) => `<details><summary>${esc(item.term)}</summary><p>${esc(item.meaning)}</p></details>`).join("")}</div></section>
       <section class="brief-section"><h3>Что могут спросить</h3><div class="brief-defs">${(data.questions || []).map((item) => `<details><summary>${esc(item.question)}</summary><p>${esc(item.answer)}</p></details>`).join("")}</div></section>
     </div>
   `;
@@ -3082,6 +2426,9 @@ function focusSequenceScope(scope) {
   state.sequence.processMembers = null;
   state.sequence.selectedId = "";
   state.sequence.selectedStage = null;
+  state.sequence.mapStage = null;
+  state.sequence.mapView = "overview";
+  state.sequence.mapFlow = "all";
   state.sequence.selectedRegionId = "";
   state.sequence.selectedRelationId = "";
   const select = $("sequence-scope");
@@ -3091,6 +2438,8 @@ function focusSequenceScope(scope) {
   params.delete("process");
   params.delete("step");
   params.delete("mapStage");
+  params.delete("mapView");
+  params.delete("mapFlow");
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
   setView("sequence");
 }
@@ -3112,13 +2461,18 @@ function focusProcess(proc) {
   params.set("scope", "all");
   params.delete("step");
   params.delete("mapStage");
+  params.delete("mapView");
+  params.delete("mapFlow");
   state.sequence.selectedId = "";
   state.sequence.selectedStage = null;
+  state.sequence.mapStage = null;
+  state.sequence.mapView = "overview";
+  state.sequence.mapFlow = "all";
   state.sequence.selectedRegionId = "";
   state.sequence.selectedRelationId = "";
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
   setView("sequence");
-  if (state.sequence.diagramMode === "process") requestAnimationFrame(fitSequence);
+  if (state.sequence.diagramMode === "process") requestAnimationFrame(() => fitSequence({ readable: true }));
 }
 
 function clearProcessFocus() {
@@ -3126,104 +2480,40 @@ function clearProcessFocus() {
   state.sequence.processMembers = null;
   state.sequence.selectedId = "";
   state.sequence.selectedStage = null;
+  state.sequence.mapStage = null;
+  state.sequence.mapView = "overview";
+  state.sequence.mapFlow = "all";
   state.sequence.selectedRegionId = "";
   state.sequence.selectedRelationId = "";
   const params = new URLSearchParams(window.location.search);
   params.delete("process");
   params.delete("step");
   params.delete("mapStage");
+  params.delete("mapView");
+  params.delete("mapFlow");
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
   renderSequenceView();
 }
 
+const mappingView = globalThis.AIProfilerMappingView;
+
 function buildMappingRows() {
-  const graph = state.graph || {};
-  const linksByContract = new Map();
-  for (const link of graph.contractFieldLinks || []) {
-    const id = String(link.contractId || "");
-    linksByContract.set(id, [...(linksByContract.get(id) || []), link]);
-  }
-  const query = state.mappings.filter.trim().toLowerCase();
-  const rows = (graph.contracts || []).map((contract) => {
-    const links = linksByContract.get(contract.contractId) || [];
-    const confirmedLinks = links.filter((link) => link.confirmed === true);
-    const mapping = contractMapping(contract);
-    const requestSource = (mapping.requestSourcePayloadTypes || []).join(", ");
-    const requestTarget = (mapping.requestTargetPayloadTypes || []).join(", ");
-    const payload = (contract.sharedPayloadTypes || []).join(", ") ||
-      ([requestSource, requestTarget].filter(Boolean).join(" → "));
-    const xlsx = mapping.href || "";
-    const csv = mapping.csvHref || "";
-    const strict = contract.confirmed === true || strictLegacyContract(contract);
-    return {
-      id: contract.contractId,
-      contract,
-      links,
-      confirmedLinks,
-      strict,
-      sourceLabel: sequenceServiceName(contract.sourceService),
-      targetLabel: sequenceServiceName(contract.targetService),
-      payload,
-      xlsx,
-      csv,
-      searchText: [
-        contract.contractId,
-        contract.sourceService,
-        contract.targetService,
-        payload,
-        contract.proofLevel,
-        contract.contractLevel,
-        contract.transport,
-        ...(contract.fieldNames || []),
-        ...(contract.fieldPaths || []),
-      ].join(" ").toLowerCase(),
-    };
+  return mappingView.buildRows(state.graph || {}, state.mappings, {
+    serviceName: sequenceServiceName,
+    strictContract: strictLegacyContract,
   });
-  return rows
-    .filter((row) => !state.mappings.confidentOnly || row.strict)
-    .filter((row) => !query || row.searchText.includes(query))
-    .sort((a, b) =>
-      Number(b.strict) - Number(a.strict) ||
-      b.confirmedLinks.length - a.confirmedLinks.length ||
-      a.sourceLabel.localeCompare(b.sourceLabel)
-    );
 }
 
 function renderMappingsView() {
   if (!state.graph) return;
   const rows = buildMappingRows();
-  const allContracts = state.graph.contracts || [];
-  const allLinks = state.graph.contractFieldLinks || [];
-  const strictContracts = allContracts.filter((contract) => contract.confirmed === true || strictLegacyContract(contract));
-  const mappedContracts = allContracts.filter((contract) => Boolean(contractMapping(contract).href));
-  const completeMappings = mappedContracts.filter((contract) => contractMapping(contract).status === "complete");
-  const responseMappings = mappedContracts.filter((contract) => (contractMapping(contract).directions || []).includes("response"));
-  const confirmedLinks = allLinks.filter((link) => link.confirmed === true);
-  $("mapping-summary").textContent = [
-    `${fmt(rows.length)} показано`,
-    `${fmt(mappedContracts.length)}/${fmt(allContracts.length)} имеют Excel · ${fmt(completeMappings.length)} пополевые полные`,
-    `${fmt(responseMappings.length)} содержат доказанный ответ`,
-    `${fmt(strictContracts.length)} уверенных`,
-    `${fmt(confirmedLinks.length)}/${fmt(allLinks.length)} пополевых путей подтверждено`,
-  ].join(" · ");
-
+  $("mapping-summary").textContent = mappingView.summary(state.graph, rows, {
+    strictContract: strictLegacyContract,
+  });
   if (!state.mappings.selectedId || !rows.some((row) => row.id === state.mappings.selectedId)) {
     state.mappings.selectedId = rows[0]?.id || "";
   }
-  $("mapping-table").innerHTML = `
-    <thead>
-      <tr>
-        <th>Маршрут</th>
-        <th>Excel-маппинг</th>
-        <th>Поля</th>
-        <th>Доказательство</th>
-        <th>Качество</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.map((row) => renderMappingRow(row)).join("") || `<tr><td colspan="5" class="empty">Маппинги не найдены под текущий фильтр.</td></tr>`}
-    </tbody>
-  `;
+  $("mapping-table").innerHTML = mappingView.tableHtml(rows, state.mappings.selectedId);
   document.querySelectorAll("[data-mapping-id]").forEach((row) => {
     row.onclick = () => {
       state.mappings.selectedId = row.dataset.mappingId || "";
@@ -3233,28 +2523,6 @@ function renderMappingsView() {
     };
   });
   renderMappingDetail(rows);
-}
-
-function renderMappingRow(row) {
-  const contract = row.contract;
-  const selected = row.id === state.mappings.selectedId ? "selected" : "";
-  const mapping = contractMapping(contract);
-  const claimStatus = contract.evidenceClaim?.status || "";
-  return `
-    <tr class="${selected}" data-mapping-id="${esc(row.id)}">
-      <td>
-        <b>${esc(row.sourceLabel)} → ${esc(row.targetLabel)}</b>
-        <div class="mono">${esc(contract.transport || "")}</div>
-      </td>
-      <td>
-        ${esc(row.payload || "payload не раскрыт")}
-        <div class="muted">${esc(mappingCoverageLabel(mapping))}</div>
-      </td>
-      <td>${fmt(contract.sharedFieldCount)} общих · ${fmt(row.confirmedLinks.length)} путей подтверждено</td>
-      <td>${esc(contractProofLabel(contract.proofLevel))}<div class="muted">${row.strict ? "уверенный" : "требует проверки"}${claimStatus ? ` · ${esc(claimStatusLabel(claimStatus))}` : ""}</div></td>
-      <td>${esc(qualityTierLabel(contract.qualityTier || contract.proofLevel || contract.status))}<div class="muted">${fmt(contract.targetSourceRefCount)} мест в коде</div></td>
-    </tr>
-  `;
 }
 
 function renderMappingDetail(rows = buildMappingRows()) {
@@ -3272,61 +2540,14 @@ function renderMappingDetail(rows = buildMappingRows()) {
     loadMappingContractDetail(contract.contractId);
     return;
   }
-  const sourceFields = (contract.sourceContractFields || []).slice(0, 80).map((field) => `<span class="field-chip">${esc(field)}</span>`).join("");
-  const targetFields = (contract.targetContractFields || []).slice(0, 80).map((field) => `<span class="field-chip">${esc(field)}</span>`).join("");
-  const linkRows = row.links.slice(0, 160).map((link) => `
-    <tr>
-      <td><b>${esc(link.field || "")}</b><div class="muted">${link.confirmed ? "подтверждено" : "требует проверки"}</div></td>
-      <td class="mono">${esc((link.sourcePaths || []).join(", "))}</td>
-      <td class="mono">${esc((link.targetPaths || []).join(", "))}</td>
-      <td>${esc(contractProofLabel(link.proofLevel))}</td>
-    </tr>
-  `).join("");
-  const preview = renderCsvPreview(row);
-  $("mapping-detail").innerHTML = `
-    <h3>${esc(row.sourceLabel)} → ${esc(row.targetLabel)}</h3>
-    <p class="muted">${esc(contract.proofLevel || "")} · ${esc(contract.transport || "")}</p>
-    <div class="kv">
-      <span>Payload</span><b>${esc(row.payload || "—")}</b>
-      <span>Полнота Excel</span><b>${esc(mappingCoverageLabel(contractMapping(contract)))}</b>
-      <span>Направления в Excel</span><b>${esc(mappingDirectionsLabel(contractMapping(contract)))}</b>
-      <span>Связь подтверждена</span><b>${row.strict ? "да" : "нет"}</b>
-      <span>Итог проверки</span><b>${esc(claimStatusLabel(contract.evidenceClaim?.status))}</b>
-      <span>Пополевые пути</span><b>${fmt(row.confirmedLinks.length)} / ${fmt(row.links.length)} подтверждено</b>
-      <span>Уровень доказательства</span><b>${esc(qualityTierLabel(contract.qualityTier || contract.proofLevel || contract.status))}</b>
-      <span>Технический ID</span><span class="mono">${esc(contract.contractId)}</span>
-    </div>
-    <div class="mapping-actions">
-      ${row.xlsx ? `<a class="mini-btn" href="${fileUrl(row.xlsx)}" target="_blank" rel="noreferrer">Открыть XLSX</a>` : ""}
-      ${row.csv ? `<button class="mini-btn" type="button" id="mapping-load-csv">Показать CSV</button>` : ""}
-    </div>
-    <div class="detail-section">
-      <h3>Поля модели отправителя</h3>
-      <div class="field-list">${sourceFields || `<span class="muted">Не раскрыты.</span>`}</div>
-    </div>
-    <div class="detail-section">
-      <h3>Поля модели получателя</h3>
-      <div class="field-list">${targetFields || `<span class="muted">Не раскрыты.</span>`}</div>
-    </div>
-    <div class="detail-section">
-      <h3>Пополевый маппинг</h3>
-      <div class="mapping-preview">
-        <table class="table">
-          <thead><tr><th>Поле</th><th>Путь у отправителя</th><th>Путь у получателя</th><th>Доказательство</th></tr></thead>
-          <tbody>${linkRows || `<tr><td colspan="4" class="muted">Пополевые пути не записаны.</td></tr>`}</tbody>
-        </table>
-      </div>
-    </div>
-    ${preview}
-  `;
+  $("mapping-detail").innerHTML = mappingView.detailHtml(row, {
+    csvPreview: state.mappings.csvPreview,
+    csvPreviewFor: state.mappings.csvPreviewFor,
+    fileUrl,
+  });
   const loadCsv = $("mapping-load-csv");
-  if (loadCsv) {
-    loadCsv.onclick = async () => {
-      await loadMappingCsvPreview(row);
-    };
-  }
+  if (loadCsv) loadCsv.onclick = async () => loadMappingCsvPreview(row);
 }
-
 function loadMappingContractDetail(contractId) {
   if (!contractId || state.contractDetailLoads.has(contractId)) return;
   state.contractDetailLoads.add(contractId);
@@ -3341,31 +2562,6 @@ function loadMappingContractDetail(contractId) {
       state.contractDetailLoads.delete(contractId);
       showError(error);
     });
-}
-
-function renderCsvPreview(row) {
-  if (state.mappings.csvPreviewFor !== row.id) return "";
-  const preview = state.mappings.csvPreview;
-  if (!preview) return "";
-  if (preview.error) {
-    return `<div class="detail-section"><h3>CSV preview</h3><p class="muted">${esc(preview.error)}</p></div>`;
-  }
-  const columns = preview.columns || [];
-  const rows = preview.rows || [];
-  return `
-    <div class="detail-section">
-      <h3>CSV preview</h3>
-      <p class="muted">${esc(preview.path || row.csv)} · ${fmt(rows.length)} строк загружено</p>
-      <div class="mapping-preview">
-        <table class="table">
-          <thead><tr>${columns.map((column) => `<th>${esc(column)}</th>`).join("")}</tr></thead>
-          <tbody>${rows.slice(0, 80).map((item) => `
-            <tr>${columns.map((column) => `<td>${esc(item[column] || "")}</td>`).join("")}</tr>
-          `).join("")}</tbody>
-        </table>
-      </div>
-    </div>
-  `;
 }
 
 async function loadMappingCsvPreview(row) {
@@ -3559,153 +2755,22 @@ function renderGapsView() {
 
 // ===== Путь потока: маршрут между двумя сервисами по доказанным рёбрам =====
 
-const TIER_RANK = { confirmed: 0, proven: 1, inferred: 2, candidate: 3 };
-
-function transportLabel(transport) {
-  const value = String(transport || "");
-  if (value.includes("kafka")) return "сообщение Kafka";
-  if (value.includes("jms")) return "сообщение JMS";
-  if (value.includes("rabbit")) return "сообщение RabbitMQ";
-  if (value.includes("grpc")) return "вызов gRPC";
-  if (value.includes("http")) return "синхронный HTTP";
-  return transport || "?";
-}
-
-function contractProofLabel(value) {
-  const labels = {
-    exact_contract: "точное совпадение модели и полей",
-    strong_contract: "сильное совпадение контракта",
-    field_contract: "совпадение по полям",
-    schema_alias_field_contract: "схемы связаны по полям и вариантам имени",
-    route_inferred: "получатель выведен из маршрута",
-    candidate: "возможная связь",
-    partial: "частичное доказательство",
-  };
-  return labels[value] || value || "—";
-}
-
-function qualityTierLabel(value) {
-  const labels = {
-    verified_contract: "проверенная связь с моделью",
-    verified_transport: "проверенный адрес или канал",
-    candidate: "требует проверки",
-    ambiguous: "несколько равных получателей",
-  };
-  return labels[value] || contractProofLabel(value);
-}
-
-function responseProofLabel(value) {
-  const labels = {
-    synchronous_http_response: "синхронный HTTP-ответ",
-    synchronous_query_response: "синхронный ответ",
-    reverse_contract: "доказан встречный канал",
-    same_payload_rq_rs: "запрос и ответ находятся в одной модели",
-    request_event_no_response_proof: "ответ не доказан",
-    missing: "ответ не доказан",
-  };
-  return labels[value] || value || "—";
-}
-
-function responseExplanation(call, compatibility) {
-  if (call.responseSemantics?.isSynchronous && compatibility?.status === "body_not_consumed") {
-    return "Вызов синхронный: клиент дожидается завершения и видит HTTP-статус, но код намеренно отбрасывает тело ответа.";
-  }
-  if (call.responseSemantics?.isSynchronous && compatibility?.status === "exact") {
-    return "Клиент делает синхронный вызов, получатель подтверждён, а модели ответа с обеих сторон совпадают.";
-  }
-  if (call.responseSemantics?.isSynchronous && compatibility?.status === "serialized_document") {
-    const usage = call.responseUsageEvidence || call.contract?.responseUsageEvidence || {};
-    return usage.status === "parsed_and_consumed"
-      ? "Ответ вернулся как сериализованный документ, затем код клиента его разобрал и передал дальше. Поля wire-модели известны, но использование каждого поля по отдельности пока не доказано."
-      : "Ответ вернулся как сериализованный документ. Поля wire-модели известны, но клиентский DTO и использование отдельных полей пока не доказаны.";
-  }
-  if (call.responseSemantics?.isSynchronous) {
-    return "Ответ возвращается вызывающему по тому же синхронному каналу; совместимость модели показана выше.";
-  }
-  if (call.responseSemantics?.kind === "reverse_contract") {
-    return "Возврат подтверждён отдельным встречным каналом.";
-  }
-  return "Возврат ответа вызывающему для этого перехода не доказан.";
-}
-
-function directionLabel(value) {
-  const labels = { "rq+rs": "запрос + ответ", request: "запрос", response: "ответ", unknown: "не определено" };
-  return labels[value] || value || "—";
-}
-
-function claimStatusLabel(value) {
-  const labels = { proven: "доказано", partial: "доказано частично", candidate: "требует проверки", ambiguous: "неоднозначно" };
-  return labels[value] || value || "—";
-}
-
-function readinessStatusLabel(value) {
-  const labels = { architecture_ready: "готово для архитектурного просмотра", usable_with_gaps: "можно использовать с оговорками", review_required: "нужна проверка" };
-  return labels[value] || value || "—";
-}
-
-function orderReasonLabel(value) {
-  const match = String(value || "").match(/^AST call path from (.+?) reaches (.+?) at (.+?); transport handoff targets (.+)\.$/);
-  if (!match) return value;
-  return `Из точки входа ${match[1]} код доходит до исходящего вызова ${match[2]} (${match[3]}), затем данные передаются в ${match[4]}.`;
-}
+const {
+  claimStatus: claimStatusLabel,
+  contractProof: contractProofLabel,
+  direction: directionLabel,
+  orderReason: orderReasonLabel,
+  qualityTier: qualityTierLabel,
+  readinessStatus: readinessStatusLabel,
+  responseExplanation,
+  responseProof: responseProofLabel,
+  transport: transportLabel,
+} = window.AIProfilerLabels;
+const { TIER_RANK, findServicePaths, pathParticipants } = globalThis.AIProfilerJourneyPaths;
 
 function pathCalls() {
   const calls = buildSequenceData(1, { applyFilters: false }).calls;
   return state.path.confidentOnly ? calls.filter((call) => call.tier === "confirmed") : calls;
-}
-
-function findServicePaths(calls, from, to, { maxLen = 10, maxPaths = 40 } = {}) {
-  const bySource = new Map();
-  for (const call of calls) {
-    if (!bySource.has(call.sourceService)) bySource.set(call.sourceService, []);
-    bySource.get(call.sourceService).push(call);
-  }
-  // Обходим сначала сильные рёбра: при лимите путей слабые (candidate) хвосты
-  // не должны вытеснять доказанные маршруты из выборки.
-  for (const list of bySource.values()) {
-    list.sort((a, b) =>
-      (TIER_RANK[a.tier] ?? 4) - (TIER_RANK[b.tier] ?? 4) ||
-      String(a.targetService || "").localeCompare(String(b.targetService || ""))
-    );
-  }
-  const paths = [];
-  const walk = (node, trail, seen) => {
-    if (paths.length >= maxPaths || trail.length >= maxLen) return;
-    for (const call of bySource.get(node) || []) {
-      if (seen.has(call.targetService)) continue;
-      const next = [...trail, call];
-      if (call.targetService === to) {
-        paths.push(next);
-        if (paths.length >= maxPaths) return;
-        continue;
-      }
-      seen.add(call.targetService);
-      walk(call.targetService, next, seen);
-      seen.delete(call.targetService);
-    }
-  };
-  walk(from, [], new Set([from]));
-  // Лучший путь = худшее звено лучше, потом короче.
-  const preference = (path) => {
-    const worst = Math.max(...path.map((c) => TIER_RANK[c.tier] ?? 4));
-    return [worst, path.length];
-  };
-  paths.sort((a, b) => {
-    const sa = preference(a), sb = preference(b);
-    return sa[0] - sb[0] || sa[1] - sb[1];
-  });
-  return paths;
-}
-
-function pathParticipants(calls) {
-  const seen = new Map();
-  for (const call of calls) {
-    if (!seen.has(call.sourceService)) seen.set(call.sourceService, call.sourceLabel);
-    if (!seen.has(call.targetService)) seen.set(call.targetService, call.targetLabel);
-  }
-  return [...seen.entries()]
-    .map(([id, label]) => ({ id, label }))
-    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
 }
 
 function ensurePathDefaults(participants, calls) {
@@ -3887,821 +2952,39 @@ const RECONSTRUCTION_GAP_DISPOSITION = {
   outside_loaded_corpus: "обе стороны находятся вне загруженного корпуса",
 };
 
-function reconstructionPayload() {
-  return state.graph?.architectureRegistry?.processReconstruction || null;
-}
-
-function reconstructionExpectedEdge(stepId) {
-  return (state.graph?.architectureRegistry?.expectedProcessGraph?.expectedEdges || [])
-    .find((item) => item.expectedEdgeId === stepId) || null;
-}
-
-function reconstructionStatus(status) {
-  return RECONSTRUCTION_STATUS[status] || { label: status || "не определено", className: "unknown" };
-}
-
-function reconstructionLayerLabel(key, value) {
-  const labels = {
-    route: {
-      proven_contract: "контракт доказан кодом",
-      proven_code_boundary: "граница найдена в коде",
-      candidate_contract: "технический кандидат",
-      missing: "маршрут не найден",
-    },
-    transportConfiguration: {
-      binding_resolved: "binding транспорта разрешён",
-      address_resolved: "адрес транспорта разрешён",
-      contains_unresolved_placeholder: "в адресе остался placeholder",
-      operation_only: "найдена операция без deployment-адреса",
-      missing: "конфигурация не найдена",
-    },
-    requestLineage: {
-      field_linked: "DTO и поля запроса связаны",
-      models_only: "найдены только модели запроса",
-      incomplete: "запрос раскрыт не полностью",
-    },
-    responseLineage: {
-      used_by_caller: "ответ прослежен до использования",
-      response_proven: "ответ доказан, продолжение не найдено",
-      transformed_and_forwarded: "ответ преобразован и передан дальше",
-      transformed: "ответ преобразован в вызывающем сервисе",
-      fields_consumed: "поля ответа прочитаны вызывающим сервисом",
-      not_available_for_process_route: "ответ найден у контракта, но не на маршруте этого процесса",
-      not_proven: "ответ не доказан",
-    },
-  };
-  return labels[key]?.[value] || value || "не определено";
-}
-
-function renderReconstructionReference(reference) {
-  const isBoundary = reference.kind === "external_code_boundary";
-  const contractLink = reference.contractId
-    ? `<a href="${esc(mappingViewUrl(reference.contractId))}">Excel-маппинг</a>`
-    : "";
-  const location = reference.sourceFile
-    ? `${reference.sourceFile}${reference.sourceLine ? `:${reference.sourceLine}` : ""}`
-    : "кодовая позиция не приложена";
-  return `
-    <div class="reconstruction-code-ref">
-      <div>
-        <strong>${esc(isBoundary
-          ? `${reference.internalService || "Сервис"} → ${reference.externalComponent || "внешний компонент"}`
-          : `${reference.sourceService || "?"} → ${reference.targetService || "?"}`)}</strong>
-        <span>${esc(isBoundary ? "внешняя граница" : `этап ${reference.stage || "?"}`)} · ${esc(reference.codeProcessName || reference.codeProcessId || "")}</span>
-      </div>
-      <small>${esc(location)}</small>
-      ${contractLink}
-    </div>`;
-}
-
-function renderReconstructionStep(step, mode) {
-  const status = reconstructionStatus(step.mappingStatus);
-  const order = step.declaredStepOrder == null ? "порядок не задан" : `шаг ${step.declaredStepOrder}`;
-  const codeOnly = step.comparisonStatus === "code_only";
-  const business = codeOnly ? `
-    <div class="reconstruction-business-cell code-only-placeholder">
-      <div class="reconstruction-step-head"><span>Excel</span><b>не заявлено</b></div>
-      <strong>Дополнительный переход реализации</strong>
-      <p>Контракт найден в коде между участниками этого процесса.</p>
-    </div>` : `
-    <div class="reconstruction-business-cell">
-      <div class="reconstruction-step-head">
-        <span>${esc((step.interactionCodes || []).join(", ") || order)}</span>
-        <b>${esc(status.label)}</b>
-      </div>
-      <strong>${esc(step.businessName || "Взаимодействие без названия")}</strong>
-      <p>${esc(step.provider?.displayName || "Неизвестный поставщик")} → ${esc(step.consumer?.displayName || "Неизвестный потребитель")}</p>
-      <small>${esc(order)}</small>
-    </div>`;
-  const implementation = `
-    <div class="reconstruction-implementation-cell">
-      ${(step.implementationReferences || []).length
-        ? step.implementationReferences.map(renderReconstructionReference).join("")
-        : step.implementationPlacementStatus === "contract_proven_process_position_unknown"
-          ? `<div class="reconstruction-empty-ref contract-unplaced"><strong>Контракт доказан</strong><span>Вызов найден в коде, но его позиция в конкретной цепочке исполнения ещё не установлена.</span></div>`
-          : `<div class="reconstruction-empty-ref"><strong>Разрыв реализации</strong><span>Ожидание есть в Excel, но причинный путь в загруженном коде не найден.</span></div>`}
-    </div>`;
-  const columns = mode === "business"
-    ? business
-    : mode === "implementation"
-      ? implementation
-      : `${business}<div class="reconstruction-link-marker" aria-hidden="true">→</div>${implementation}`;
-  return `
-    <button class="reconstruction-row mode-${esc(mode)} status-${esc(status.className)} ${step.businessStepId === state.reconstruction.selectedStepId ? "selected" : ""}"
-      data-business-step="${esc(step.businessStepId)}" type="button">
-      ${columns}
-    </button>`;
-}
-
-function renderReconstructionDetail(step) {
-  const detail = $("reconstruction-detail");
-  if (!step) {
-    detail.innerHTML = `<div class="empty">Выберите бизнес-шаг, чтобы увидеть Excel, код, DTO и статус каждого слоя.</div>`;
-    return;
-  }
-  const status = reconstructionStatus(step.mappingStatus);
-  const coverage = step.evidenceCoverage || {};
-  const quality = step.qualityDiagnostics || {};
-  const continuity = quality.processContinuity || {};
-  const sourceRefs = step.sourceRefs || [];
-  const ai = step.aiVerification || {};
-  const aiAdmission = ai.finalAdmission || {};
-  const contractIds = uniq([
-    step.contractId,
-    ...(step.implementationReferences || []).map((item) => item.contractId),
-  ].filter(Boolean));
-  const expectedEdge = reconstructionExpectedEdge(step.businessStepId) || {};
-  const contractEvidence = expectedEdge.implementationEvidence || step.implementationEvidence || [];
-  const bindingEvidence = expectedEdge.contractBindingEvidence || {};
-  const codeOnly = step.comparisonStatus === "code_only";
-  detail.innerHTML = `
-    <div class="reconstruction-detail-head status-${esc(status.className)}">
-      <span>${esc((step.interactionCodes || []).join(", ") || "Бизнес-шаг")}</span>
-      <h3>${esc(step.businessName || "Взаимодействие")}</h3>
-      <b>${esc(status.label)}</b>
-    </div>
-    <section>
-      <h4>Ожидание реестра</h4>
-      ${codeOnly ? `<p class="reconstruction-code-only-note">Такого перехода нет в выбранном Excel-процессе. Он показан, потому что анализатор нашёл доказанный контракт между его участниками.</p>` : `<dl class="reconstruction-facts">
-        <dt>Поставщик</dt><dd>${esc(step.provider?.displayName || "не разрешён")}</dd>
-        <dt>Потребитель</dt><dd>${esc(step.consumer?.displayName || "не разрешён")}</dd>
-        <dt>Порядок</dt><dd>${step.declaredStepOrder == null ? "в Excel не задан" : esc(step.declaredStepOrder)}</dd>
-        <dt>Статус сверки</dt><dd>${esc(RECONSTRUCTION_COMPARISON_STATUS[step.comparisonStatus] || step.comparisonStatus || "не определён")}</dd>
-        <dt>Тип разрыва</dt><dd>${esc(RECONSTRUCTION_GAP_DISPOSITION[step.gapDisposition] || step.gapDisposition || "не применимо")}</dd>
-      </dl>`}
-      ${sourceRefs.length ? `<div class="reconstruction-sources">${sourceRefs.map((ref) => `
-        <div><b>${esc(ref.sheet || "Excel")}</b><span>${esc(ref.file || "")} · строка ${esc(ref.row || "?")}</span></div>
-      `).join("")}</div>` : `<p class="muted">Ссылка на строку Excel не приложена.</p>`}
-    </section>
-    <section>
-      <h4>Покрытие доказательствами</h4>
-      <dl class="reconstruction-facts">
-        <dt>Маршрут</dt><dd>${esc(reconstructionLayerLabel("route", coverage.route))}</dd>
-        <dt>Конфигурация</dt><dd>${esc(reconstructionLayerLabel("transportConfiguration", coverage.transportConfiguration))}</dd>
-        <dt>Запрос</dt><dd>${esc(reconstructionLayerLabel("requestLineage", coverage.requestLineage))}</dd>
-        <dt>Ответ</dt><dd>${esc(reconstructionLayerLabel("responseLineage", coverage.responseLineage))}</dd>
-        <dt>Связи полей</dt><dd>${fmt(coverage.verifiedRequestFieldLinkCount)} запрос · ${fmt(coverage.verifiedResponseFieldLinkCount)} ответ</dd>
-        <dt>Ссылки на код</dt><dd>${fmt(coverage.codeReferenceCount)}</dd>
-        ${continuity.status ? `<dt>Продолжение процесса</dt><dd>${esc({
-          same_process_proven: "тот же процесс доказан",
-          same_process_supported: "тот же процесс подтверждается идентификаторами",
-          independent_event: "отдельное событие, не продолжение исходного процесса",
-          unknown: "связь экземпляров процесса не доказана",
-        }[continuity.status] || continuity.status)}</dd>` : ""}
-        ${(continuity.correlationFields || []).length ? `<dt>Сквозные идентификаторы</dt><dd>${esc(continuity.correlationFields.join(", "))}</dd>` : ""}
-      </dl>
-      ${(quality.gaps || []).length ? `<div class="reconstruction-warning"><b>Что ещё не доказано:</b> ${esc(quality.gaps.map((gap) => ({
-        route_not_proven: "полный маршрут",
-        transport_configuration_not_resolved: "физический адрес или канал",
-        request_fields_not_verified: "связи полей запроса",
-        response_not_proven: "возвращение ответа",
-        response_fields_not_verified: "связи полей ответа",
-        consumer_fields_missing_in_mapping: "поля, которые ожидает получатель",
-        mapping_not_fully_verified: "полнота Excel-маппинга",
-        process_position_not_proven: "место вызова внутри процесса",
-      }[gap] || gap)).join("; "))}</div>` : ""}
-    </section>
-    ${bindingEvidence.status ? `<section>
-      <h4>Как выбрана кодовая операция</h4>
-      <p class="reconstruction-binding-verdict">${esc({
-        unique_service_pair: "Между участниками найден один доказанный контракт.",
-        semantic_operation_match: "Из нескольких контрактов выбран тот, чья операция совпадает с названием и точками взаимодействия в Excel.",
-        bounded_ai_operation_match: "Из нескольких контрактов AI-проверяющий выбрал конкретную операцию и подтвердил её ссылками на код с обеих сторон.",
-        ambiguous_service_pair: "Между участниками есть несколько контрактов, но Excel не позволяет однозначно выбрать нужную операцию.",
-        bidirectional_direction_conflict: "В коде найдены доказанные контракты в обоих направлениях; требуется проверить смысл направления в Excel.",
-      }[bindingEvidence.status] || bindingEvidence.status)}</p>
-      ${(bindingEvidence.candidates || []).map((candidate) => {
-        const matches = [
-          ...(candidate.pointMatches?.exact || []),
-          ...(candidate.pointMatches?.contained || []),
-          ...(candidate.pointMatches?.near || []),
-          ...(candidate.nameMatches?.exact || []),
-          ...(candidate.nameMatches?.contained || []),
-          ...(candidate.nameMatches?.near || []),
-        ];
-        return `<div class="reconstruction-binding-candidate ${candidate.selected ? "selected" : "rejected"}">
-          <b>${candidate.selected ? "выбран" : "не привязан"}</b>
-          <span>${esc(candidate.contractId || "контракт без ID")}</span>
-          <small>${candidate.selectionEvidence === "bounded_ai_with_verified_code_citations"
-            ? "выбрано AI-проверкой по проверенным ссылкам на код"
-            : matches.length
-              ? `совпали признаки: ${esc(uniq(matches).join(", "))}`
-              : "совпадающих признаков операции нет"}</small>
-        </div>`;
-      }).join("")}
-    </section>` : ""}
-    <section>
-      <h4>Реализация</h4>
-      ${(step.implementationReferences || []).map(renderReconstructionReference).join("") || (step.implementationPlacementStatus === "contract_proven_process_position_unknown"
-        ? `<p class="reconstruction-gap-text">Контракт подтверждён кодом и Excel, но точка размещения в одной из восстановленных цепочек исполнения не доказана.</p>`
-        : `<p class="reconstruction-gap-text">Кодовый путь не найден. Это видимый gap, а не скрытый пропуск диаграммы.</p>`)}
-      ${contractIds.map((contractId) => `<a class="mini-btn wide" href="${esc(mappingViewUrl(contractId))}">Открыть маппинг ${esc(contractId)}</a>`).join("")}
-      ${(step.codeOrderEvidence || []).length ? `<details><summary>Показать доказанный порядок (${fmt(step.codeOrderEvidence.length)})</summary><div class="reconstruction-field-links">${step.codeOrderEvidence.map((item) => `<span>${esc(item.fromBusinessStepId)} → ${esc(item.toBusinessStepId)} · ${esc(item.kind)} · ${esc(item.evidence)}</span>`).join("")}</div></details>` : `<p class="muted">Причинная связь этого шага с соседними бизнес-шагами не доказана.</p>`}
-    </section>
-    ${contractEvidence.map((evidence) => {
-      const transport = evidence.transportEvidence || {};
-      const request = evidence.requestLineage || {};
-      const response = evidence.responseLineage || {};
-      const mapping = evidence.mappingEvidence || {};
-      return `<section class="reconstruction-contract-evidence ${evidence.candidate ? "candidate" : "confirmed"}">
-        <h4>${esc(evidence.sourceService || "?")} → ${esc(evidence.targetService || "?")} ${evidence.candidate ? "· кандидат" : "· подтверждён"}</h4>
-        <dl class="reconstruction-facts">
-          <dt>Транспорт</dt><dd>${esc(evidence.transport || "не определён")}</dd>
-          <dt>Адрес / канал</dt><dd>${esc(evidence.transportAddress || transport.sourceAddress || "не разрешён")}</dd>
-          <dt>Конфигурация</dt><dd>${esc(reconstructionLayerLabel("transportConfiguration", transport.configurationStatus))}</dd>
-          <dt>Профиль конфигурации</dt><dd>${esc((transport.configurationProfiles || []).join(", ") || "не задан или общий")}</dd>
-          <dt>Источник конфигурации</dt><dd>${esc((transport.configurationSources || []).join(", ") || "не приложен")}</dd>
-          <dt>DTO запроса</dt><dd>${esc((request.sourceModelTypes || []).join(", ") || "не найден")}</dd>
-          <dt>DTO ресивера</dt><dd>${esc((request.targetModelTypes || []).join(", ") || "не найден")}</dd>
-          <dt>Основание DTO запроса</dt><dd>${esc([...(request.sourceModelEvidence || []), ...(request.targetModelEvidence || [])].join(", ") || "тип без раскрытого источника")}</dd>
-          <dt>Поля запроса</dt><dd>${fmt(request.verifiedFieldLinkCount)} подтверждено</dd>
-          <dt>DTO ответа</dt><dd>${esc((response.callerModelTypes || []).join(", ") || "не найден")}</dd>
-          <dt>Ответ у ресивера</dt><dd>${esc((response.receiverModelTypes || []).join(", ") || "не найден")}</dd>
-          <dt>Продолжение ответа</dt><dd>${esc(reconstructionLayerLabel("responseLineage", response.status))}</dd>
-          <dt>Маршруты ответа</dt><dd>${esc((response.executionRouteIds || []).join(", ") || "не привязаны")}</dd>
-          ${mapping.status ? `<dt>Excel-маппинг</dt><dd>${esc({
-            complete: "полный",
-            partial: "частичный",
-            missing: "не сформирован",
-          }[mapping.status] || mapping.status)} · ${fmt(mapping.resolvedFieldRowCount)} подтверждено${mapping.unresolvedRowCount ? ` · ${fmt(mapping.unresolvedRowCount)} не доказано` : ""}</dd>
-          <dt>Покрытие получателя</dt><dd>${esc({
-            complete: "все используемые поля покрыты",
-            gap: "часть используемых полей отсутствует",
-            unknown: "используемые поля не определены",
-          }[mapping.consumerCoverageStatus] || mapping.consumerCoverageStatus || "не определено")}</dd>` : ""}
-        </dl>
-        ${(mapping.missingConsumerFields || []).length ? `<p class="reconstruction-warning"><b>Получатель использует, но передача не доказана:</b> ${esc(mapping.missingConsumerFields.join(", "))}</p>` : ""}
-        ${mapping.coverageNote ? `<p class="muted">${esc(mapping.coverageNote)}</p>` : ""}
-        ${(request.fieldLinkSample || []).length ? `<details><summary>Показать связанные поля запроса</summary><div class="reconstruction-field-links">${request.fieldLinkSample.map((field) => `<span>${esc((field.sourcePaths || []).join(" / ") || field.field)} → ${esc((field.targetPaths || []).join(" / ") || field.field)}</span>`).join("")}</div></details>` : ""}
-        ${(response.fieldLinkSample || []).length ? `<details><summary>Показать связанные поля ответа</summary><div class="reconstruction-field-links">${response.fieldLinkSample.map((field) => `<span>${esc((field.sourcePaths || []).join(" / ") || field.field)} → ${esc((field.targetPaths || []).join(" / ") || field.field)}</span>`).join("")}</div></details>` : ""}
-      </section>`;
-    }).join("")}
-    ${step.responseContinuation?.status && step.responseContinuation.status !== "not_proven" ? `<section>
-      <h4>Что происходит с ответом в этом процессе</h4>
-      <p><b>${esc(reconstructionLayerLabel("responseLineage", step.responseContinuation.status))}</b> · маршрутов: ${fmt(step.responseContinuation.executionRouteIds?.length)} · прочитано полей: ${fmt(step.responseContinuation.usedResponseFields?.length)}</p>
-      ${(step.responseContinuation.receiverModelTypes || []).length || (step.responseContinuation.callerModelTypes || []).length ? `<p><b>Путь ответа:</b> ${esc((step.responseContinuation.receiverModelTypes || []).join(", ") || "тип ресивера не найден")} → ${esc((step.responseContinuation.callerModelTypes || []).join(", ") || "тип вызывающего не найден")}${(step.responseContinuation.callerVariables || []).length ? ` → ${esc(step.responseContinuation.callerVariables.join(", "))}` : ""}</p>` : ""}
-      ${step.responseContinuation.scopeStatus === "contract_level_fallback" ? `<p class="reconstruction-warning">Продолжение доказано на уровне контракта, но старый снимок не содержит route ID. После нового анализа оно будет привязано к конкретному пути исполнения.</p>` : ""}
-      ${(step.responseContinuation.transformations || []).map((item) => `<div class="reconstruction-code-ref"><strong>${esc(item.receiver || "")}.${esc(item.method || "")}</strong><small>${esc((item.sourceVariables || []).join(", "))} → ${esc((item.resultVariables || []).join(", "))} · строка ${esc(item.line || "?")}</small></div>`).join("")}
-      ${(step.responseContinuation.sinks || []).map((item) => `<div class="reconstruction-code-ref"><strong>Дальнейший вызов: ${esc(item.receiver || "")}.${esc(item.method || "")}</strong><small>${esc((item.variables || []).join(", "))} · строка ${esc(item.line || "?")}</small></div>`).join("")}
-    </section>` : ""}
-    ${ai.status ? `<section>
-      <h4>AI-проверка</h4>
-      <p><b>${esc(aiAdmission.status === "accepted" ? "принято" : aiAdmission.status === "rejected" ? "отклонено" : "ожидает проверки")}</b> · ${esc({
-        concrete_gap_and_tool_citation_verified: "разрыв конкретен, ссылки на код проверены",
-        no_tool_citation_resolves_to_source_file: "ни одна ссылка AI не разрешилась в исходный файл",
-        cross_service_claim_missing_citation_for_one_side: "AI не привёл проверяемые ссылки на код обеих сторон",
-      }[aiAdmission.reason] || aiAdmission.reason || "детерминированная проверка ещё не завершена")}</p>
-      ${(ai.serviceResults || []).map((item) => `<div class="reconstruction-ai-result"><b>${esc(item.serviceId)}</b><span>${esc(item.summary || (item.missingEvidence || []).join("; ") || item.status)}</span></div>`).join("")}
-      ${(ai.verifiedCodeLocations || []).length ? `<details><summary>Показать проверенные ссылки на код</summary><div class="reconstruction-field-links">${ai.verifiedCodeLocations.map((item) => `<span>${esc(item.path || "")}:${esc(item.line || "?")}</span>`).join("")}</div></details>` : ""}
-      <small>AI не имеет права добавлять стрелку без проверенной ссылки на код.</small>
-    </section>` : ""}
-  `;
-}
-
-function setReconstructionMode(mode) {
-  state.reconstruction.mode = ["business", "implementation", "compare"].includes(mode) ? mode : "compare";
-  const params = new URLSearchParams(window.location.search);
-  params.set("reconMode", state.reconstruction.mode);
-  window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-  renderReconstructionView();
-}
-
-function reconstructionContractIds(process) {
-  return uniq([
-    ...(process.businessLayer?.steps || []),
-    ...(process.implementationLayer?.codeOnlySteps || []),
-  ].flatMap((step) => [
-    step.contractId,
-    ...(step.implementationReferences || []).map((reference) => reference.contractId),
-  ]).filter(Boolean));
-}
-
-function reconstructionSourceRefs(process) {
-  const seen = new Set();
-  return (process.businessLayer?.steps || []).flatMap((step) => step.sourceRefs || []).filter((reference) => {
-    const key = `${reference.file || ""}|${reference.sheet || ""}|${reference.row || ""}`;
-    if (!reference.file || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-async function reconstructionExportContracts(process, packageMode) {
-  const result = {};
-  const contractIds = reconstructionContractIds(process);
-  for (let start = 0; start < contractIds.length; start += 8) {
-    const batch = contractIds.slice(start, start + 8);
-    const details = await Promise.all(batch.map(async (contractId) => {
-      const detail = await api(`/api/snapshots/${encodeURIComponent(state.snapshot.id)}/contract-detail?contract_id=${encodeURIComponent(contractId)}`);
-      return [contractId, detail];
-    }));
-    details.forEach(([contractId, detail]) => {
-      const fileName = String(detail.crossServiceDataSurf?.file || "").split(/[\\/]/).pop();
-      result[contractId] = {
-        sourceService: detail.sourceService || "",
-        targetService: detail.targetService || "",
-        mappingHref: packageMode && fileName ? `mappings/${encodeURIComponent(fileName)}` : mappingViewUrl(contractId),
-      };
-    });
-  }
-  return result;
-}
-
-async function exportReconstruction(kind) {
-  const reconstruction = reconstructionPayload();
-  const process = (reconstruction?.processes || []).find(
-    (item) => item.reconstructedProcessId === state.reconstruction.processId
-  );
-  if (!process || !state.snapshot?.id || !window.AIProfilerReconstructionExport) return;
-  const button = $(kind === "package" ? "reconstruction-export-package" : "reconstruction-export-html");
-  const oldLabel = button?.textContent;
-  if (button) {
-    button.disabled = true;
-    button.textContent = kind === "package" ? "Собираю ZIP…" : "Собираю HTML…";
-  }
-  try {
-    const packageMode = kind === "package";
-    const contracts = await reconstructionExportContracts(process, packageMode);
-    const title = `AI Profiler — ${process.name}`;
-    const html = window.AIProfilerReconstructionExport.buildHtml({
-      title,
-      snapshotName: state.snapshot.name || state.snapshot.id,
-      process,
-      contracts,
-      packageMode,
-    });
-    const safeName = String(process.name || process.reconstructedProcessId || "process")
-      .replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]+/g, "_");
-    if (!packageMode) {
-      return download(`process_reconstruction_${safeName}.html`, new Blob([html], { type: "text/html;charset=utf-8" }));
-    }
-    const response = await fetch(`/api/snapshots/${encodeURIComponent(state.snapshot.id)}/reconstruction-package`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        html,
-        contractIds: reconstructionContractIds(process),
-        processName: process.name || "",
-        reconstructedProcessId: process.reconstructedProcessId || "",
-        sourceRefs: reconstructionSourceRefs(process),
-        process,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.detail || `${response.status} ${response.statusText}`);
-    }
-    return download(`ai_profiler_${safeName}_reconstruction.zip`, await response.blob());
-  } catch (error) {
-    showError(error);
-    return undefined;
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldLabel;
-    }
-  }
-}
-
-function renderReconstructionAiQueue(process) {
-  const panel = $("reconstruction-ai-queue");
-  if (!panel) return;
-  if (state.reconstruction.aiQueueProcessId !== process.reconstructedProcessId) {
-    panel.innerHTML = `<div class="reconstruction-ai-head"><div><h3>AI-проверка разрывов</h3><p>Загружаю очередь только для выбранного процесса…</p></div></div>`;
-    if (!state.reconstruction.aiQueueLoading) loadReconstructionAiQueue(process.reconstructedProcessId);
-    return;
-  }
-  const queue = state.reconstruction.aiQueue || { summary: {}, tasks: [] };
-  if (queue.unavailable) {
-    panel.innerHTML = `
-      <div class="reconstruction-ai-head">
-        <div>
-          <h3>AI-проверка разрывов</h3>
-          <p>Для запуска проверяющего агента подключите backend AI Profiler. Просмотр отчёта и доказательств доступен без него.</p>
-        </div>
-        <span class="badge warn">backend не подключён</span>
-      </div>`;
-    return;
-  }
-  const summary = queue.summary || {};
-  const tasks = queue.tasks || [];
-  const queuedTasks = tasks.filter((task) => task.researchable && ["queued", "retryable_error"].includes(task.queueStatus));
-  const batchSize = Math.min(10, queuedTasks.length);
-  const verification = state.reconstruction.aiVerification;
-  const claims = verification?.claims || [];
-  const priorityLabels = {
-    candidate_and_both_sources: "обе стороны + технический кандидат",
-    both_sources: "исходники доступны с обеих сторон",
-    candidate_and_one_source: "одна сторона + технический кандидат",
-    one_source: "исходники доступны с одной стороны",
-    researched: "уже исследовано",
-    admitted: "уже принято",
-    not_researchable: "исходники не привязаны",
-  };
-  panel.innerHTML = `
-    <div class="reconstruction-ai-head">
-      <div><h3>AI-проверка разрывов</h3><p>Агент получает один конкретный переход, исследует обе стороны и возвращает проверяемые ссылки. Снимок не меняется автоматически.</p></div>
-      <div class="reconstruction-ai-head-actions">
-        <div class="reconstruction-ai-counts">
-          <span><b>${fmt(summary.taskCount)}</b> задач</span>
-          <span><b>${fmt(summary.queued)}</b> в очереди</span>
-          <span><b>${fmt(summary.retryable_error)}</b> можно повторить</span>
-          <span><b>${fmt(summary.researched)}</b> исследовано</span>
-          <span><b>${fmt(summary.admitted)}</b> принято</span>
-        </div>
-        ${batchSize ? `<button class="btn secondary" type="button" data-reconstruction-ai-batch ${state.reconstruction.aiVerificationRunning ? "disabled" : ""}>Проверить следующие ${fmt(batchSize)}</button>` : ""}
-      </div>
-    </div>
-    ${verification ? `<div class="reconstruction-ai-journal">
-      <strong>Последний черновой запуск</strong>
-      <span>${verification.selectedTaskIds?.length ? `проверено задач: ${fmt(verification.selectedTaskIds.length)}` : esc(verification.skipped || "нет задач")}</span>
-      <span>admission: ${fmt(verification.finalAdmission?.accepted)} принято · ${fmt(verification.finalAdmission?.rejected)} отклонено</span>
-      ${verification.batchReport ? `<span>результаты: ${Object.entries(verification.batchReport.resultStatusCounts || {}).map(([status, count]) => `${esc(status)} ${fmt(count)}`).join(" · ") || "нет"}</span>` : ""}
-      ${claims.map((claim) => `<div><b>${esc(claim.interactionCode || claim.registryRowId || "гипотеза")}</b><span>${esc((claim.finalAdmission || {}).status || "не допущена")} · ${fmt((claim.verifiedCodeLocations || []).length)} проверенных ссылок</span></div>`).join("")}
-      ${verification.canCommit ? `<button class="btn" type="button" data-reconstruction-ai-commit ${state.reconstruction.aiCommitRunning ? "disabled" : ""}>${claims.some((claim) => (claim.finalAdmission || {}).status === "accepted") ? "Сохранить проверенный снимок" : "Сохранить отрицательный аудит"}</button>` : `<small>Для сохранения сначала нужно исследовать хотя бы одну задачу.</small>`}
-    </div>` : ""}
-    <details class="reconstruction-ai-tasks" ${tasks.length <= 8 ? "open" : ""}>
-      <summary>Показать задачи процесса (${fmt(tasks.length)})</summary>
-      <div>${tasks.slice(0, 40).map((task) => `
-        <article class="reconstruction-ai-task status-${esc(task.queueStatus)}">
-          <div><b>${esc((task.interactionCode || []).join?.(", ") || task.interactionCode || task.name || "Переход")}</b><span>${esc(task.providerComponent || "?")} → ${esc(task.consumerComponent || "?")}</span><small>${esc((task.priority?.reasons || []).join(" · "))}</small></div>
-          <div class="reconstruction-ai-priority"><b>${esc(priorityLabels[task.priority?.band] || task.priority?.band || "без приоритета")}</b><span>${esc({ queued: "ожидает проверки", retryable_error: "ошибка LLM, можно повторить", researched: "исследовано, но не допущено", admitted: "допущено", not_researchable: "нет доступных исходников" }[task.queueStatus] || task.queueStatus)}</span></div>
-          ${task.researchable ? `<button class="mini-btn" type="button" data-reconstruction-ai-task="${esc(task.taskId)}" ${state.reconstruction.aiVerificationRunning ? "disabled" : ""}>Проверить</button>` : ""}
-        </article>`).join("")}</div>
-      ${tasks.length > 40 ? `<small>Показаны первые 40 задач из ${fmt(tasks.length)}.</small>` : ""}
-    </details>`;
-  panel.querySelectorAll("[data-reconstruction-ai-task]").forEach((button) => {
-    button.onclick = () => runReconstructionAiVerification(button.dataset.reconstructionAiTask);
-  });
-  panel.querySelector("[data-reconstruction-ai-batch]")?.addEventListener("click", () => {
-    runReconstructionAiVerification("", batchSize);
-  });
-  panel.querySelector("[data-reconstruction-ai-commit]")?.addEventListener("click", commitReconstructionAiVerification);
-}
-
-async function loadReconstructionAiQueue(processId) {
-  state.reconstruction.aiQueueLoading = true;
-  try {
-    const queue = await api(`/api/snapshots/${encodeURIComponent(state.snapshot.id)}/reconstruction-ai-queue?process_id=${encodeURIComponent(processId)}`);
-    if (state.reconstruction.processId !== processId) return;
-    state.reconstruction.aiQueueProcessId = processId;
-    state.reconstruction.aiQueue = queue;
-  } catch (error) {
-    state.reconstruction.aiQueueProcessId = processId;
-    state.reconstruction.aiQueue = { summary: {}, tasks: [], unavailable: true, message: error?.message || String(error) };
-  } finally {
-    state.reconstruction.aiQueueLoading = false;
-    if (state.reconstruction.processId === processId) renderReconstructionView();
-  }
-}
-
-async function runReconstructionAiVerification(taskId = "", maxTasks = 1) {
-  if (!state.snapshot?.id || !state.reconstruction.processId) return;
-  const button = taskId
-    ? document.querySelector(`[data-reconstruction-ai-task="${CSS.escape(taskId)}"]`)
-    : document.querySelector("[data-reconstruction-ai-batch]");
-  const oldLabel = button?.textContent;
-  state.reconstruction.aiVerificationRunning = true;
-  if (button) {
-    button.disabled = true;
-    button.textContent = taskId ? "Исследую…" : "Исследую пакет…";
-  }
-  try {
-    state.reconstruction.aiVerification = await api(
-      `/api/snapshots/${encodeURIComponent(state.snapshot.id)}/reconstruction-ai-verify`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reconstructedProcessId: state.reconstruction.processId, taskIds: taskId ? [taskId] : [], maxTasks }),
-      }
-    );
-    renderReconstructionView();
-  } catch (error) {
-    showError(error);
-  } finally {
-    state.reconstruction.aiVerificationRunning = false;
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldLabel;
-    }
-  }
-}
-
-async function commitReconstructionAiVerification() {
-  const verification = state.reconstruction.aiVerification;
-  if (!state.snapshot?.id || !verification?.verificationId || !verification.canCommit) return;
-  const sourceSnapshotId = state.snapshot.id;
-  const button = document.querySelector("[data-reconstruction-ai-commit]");
-  const oldLabel = button?.textContent;
-  state.reconstruction.aiCommitRunning = true;
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Сохраняю снимок…";
-  }
-  try {
-    const result = await api(
-      `/api/snapshots/${encodeURIComponent(sourceSnapshotId)}/reconstruction-ai-commit`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verificationId: verification.verificationId }),
-      }
-    );
-    const snapshotId = result.snapshot?.id;
-    if (!snapshotId) throw new Error("Сервер не вернул ID нового снимка");
-    const params = new URLSearchParams(window.location.search);
-    params.set("snapshot", snapshotId);
-    params.set("businessProcess", state.reconstruction.processId);
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-    await loadSnapshots();
-  } catch (error) {
-    showError(error);
-  } finally {
-    state.reconstruction.aiCommitRunning = false;
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldLabel;
-    }
-  }
-}
-
-function renderReconstructionView() {
-  const reconstruction = reconstructionPayload();
-  const board = $("reconstruction-board");
-  const processSelect = $("reconstruction-process");
-  if (!reconstruction?.processes?.length) {
-    const loading = !state.snapshot || $("api-state")?.textContent === "loading";
-    $("reconstruction-summary").textContent = loading
-      ? "Загружаю сверку бизнес-процесса с кодом…"
-      : "В этом снимке ещё нет Process Reconstruction v2.";
-    $("reconstruction-metrics").innerHTML = "";
-    board.innerHTML = `<div class="empty">${loading
-      ? "Читаю ожидаемые шаги Excel и доказательства из кода."
-      : "Пересоберите системный отчёт с архитектурным Excel: старые снимки не содержат двухслойный IR."}</div>`;
-    renderReconstructionDetail(null);
-    return;
-  }
-  const processes = reconstruction.processes;
-  if (!processes.some((item) => item.reconstructedProcessId === state.reconstruction.processId)) {
-    state.reconstruction.processId = processes[0].reconstructedProcessId;
-  }
-  const process = processes.find((item) => item.reconstructedProcessId === state.reconstruction.processId);
-  processSelect.innerHTML = processes.map((item) => `
-    <option value="${esc(item.reconstructedProcessId)}">${esc(item.name)} · ${fmt(item.comparisonLayer?.expectedStepCount)} шагов</option>
-  `).join("");
-  processSelect.value = process.reconstructedProcessId;
-  const businessSteps = process.businessLayer?.steps || [];
-  const codeOnlySteps = process.implementationLayer?.codeOnlySteps || [];
-  const implementedBusinessSteps = businessSteps.filter((item) =>
-    (item.implementationReferences || []).length || item.implementationPlacementStatus === "contract_proven_process_position_unknown"
-  );
-  const steps = state.reconstruction.mode === "business"
-    ? businessSteps
-    : state.reconstruction.mode === "implementation"
-      ? [...implementedBusinessSteps, ...codeOnlySteps]
-      : [...businessSteps, ...codeOnlySteps];
-  if (!steps.some((item) => item.businessStepId === state.reconstruction.selectedStepId)) {
-    state.reconstruction.selectedStepId = steps[0]?.businessStepId || "";
-  }
-  const selected = steps.find((item) => item.businessStepId === state.reconstruction.selectedStepId);
-  const comparison = process.comparisonLayer || {};
-  const expectedCount = Number(comparison.expectedStepCount || 0);
-  const implementedCount = Number(comparison.implementedStepCount || 0);
-  const processCoverage = expectedCount > 0 ? (implementedCount / expectedCount) * 100 : 0;
-  const loadedCorpusCoverage = comparison.loadedCorpusCoverage || {};
-  const coverageMetrics = loadedCorpusCoverage.metrics || comparison.coverageMetrics || {};
-  const eligibleCount = Number(loadedCorpusCoverage.eligibleStepCount || 0);
-  const eligibleImplemented = Number(loadedCorpusCoverage.implementedEligibleStepCount || 0);
-  const eligibleCoverage = eligibleCount > 0 ? (eligibleImplemented / eligibleCount) * 100 : 0;
-  const coverageCards = [
-    ["route", "маршрут"],
-    ["transport", "транспорт"],
-    ["requestModel", "DTO запроса"],
-    ["requestFields", "поля запроса"],
-    ["response", "ответ"],
-    ["responseFields", "поля ответа"],
-    ["codePosition", "позиция по коду"],
-    ["codeCausality", "причинный порядок по коду"],
-    ["declaredOrder", "порядок из реестра"],
-  ];
-  $("reconstruction-summary").textContent = `${process.name} · ${process.businessLayer?.orderEvidence?.status === "not_declared" ? "Excel задаёт состав, но не порядок" : "порядок заявлен в Excel"}`;
-  $("reconstruction-metrics").innerHTML = `
-    <div><strong>${fmt(expectedCount)}</strong><span>ожидается по Excel</span></div>
-    <div><strong>${fmt(implementedCount)}</strong><span>реализация найдена</span></div>
-    <div><strong>${processCoverage.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</strong><span>покрытие процесса кодом</span></div>
-    ${eligibleCount ? `<div><strong>${eligibleCoverage.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</strong><span>покрытие доступных сервисов · ${fmt(eligibleImplemented)} / ${fmt(eligibleCount)}</span></div>` : ""}
-    <div><strong>${fmt(comparison.candidateStepCount)}</strong><span>кандидаты</span></div>
-    <div><strong>${fmt(comparison.actionableGapStepCount)}</strong><span>разрывы анализатора</span></div>
-    <div><strong>${fmt(Number(comparison.externalBoundaryStepCount || 0) + Number(comparison.outsideCorpusStepCount || 0))}</strong><span>границы загруженного корпуса</span></div>
-    <div><strong>${fmt(process.implementationLayer?.codeProcessIds?.length)} / ${fmt(comparison.codeOnlyStepCount)}</strong><span>code-процессов / переходов только в коде</span></div>
-    <div class="reconstruction-layer-coverage">
-      <strong>${eligibleCount ? "Покрытие доказательств внутри доступного корпуса" : "Покрытие отдельных слоёв доказательств"}</strong>
-      <div>${coverageCards.map(([key, label]) => {
-        const metric = coverageMetrics[key] || {};
-        return `<span><b>${fmt(metric.covered)} / ${fmt(metric.total)}</b><i>${esc(label)} · ${fmt(metric.pct)}%</i></span>`;
-      }).join("")}${loadedCorpusCoverage.mappingConsumerComplete ? `<span><b>${fmt(loadedCorpusCoverage.mappingConsumerComplete.covered)} / ${fmt(loadedCorpusCoverage.mappingConsumerComplete.total)}</b><i>Excel покрывает получателя · ${fmt(loadedCorpusCoverage.mappingConsumerComplete.pct)}%</i></span>` : ""}</div>
-    </div>`;
-  for (const mode of ["business", "implementation", "compare"]) {
-    $(`reconstruction-mode-${mode}`)?.classList.toggle("active", state.reconstruction.mode === mode);
-  }
-  board.innerHTML = `
-    <div class="reconstruction-board-head mode-${esc(state.reconstruction.mode)}">
-      ${state.reconstruction.mode !== "implementation" ? "<span>Ожидание из Excel</span>" : ""}
-      ${state.reconstruction.mode === "compare" ? "<i></i>" : ""}
-      ${state.reconstruction.mode !== "business" ? "<span>Фактическая реализация в коде</span>" : ""}
-    </div>
-    <div class="reconstruction-rows">${steps.length
-      ? steps.map((step) => renderReconstructionStep(step, state.reconstruction.mode)).join("")
-      : `<div class="empty">В этом режиме для процесса нет переходов.</div>`}</div>`;
-  board.querySelectorAll("[data-business-step]").forEach((button) => {
-    button.onclick = () => {
-      state.reconstruction.selectedStepId = button.dataset.businessStep || "";
-      const params = new URLSearchParams(window.location.search);
-      params.set("businessStep", state.reconstruction.selectedStepId);
-      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
-      renderReconstructionView();
-    };
-  });
-  renderReconstructionDetail(selected);
-  renderReconstructionAiQueue(process);
-}
-
+const reconstructionController = globalThis.AIProfilerReconstructionController.create({
+  state,
+  getElement: $,
+  request: api,
+  esc,
+  fmt,
+  uniq,
+  mappingViewUrl,
+  download,
+  loadSnapshots,
+  showError,
+  statuses: RECONSTRUCTION_STATUS,
+  comparisonStatuses: RECONSTRUCTION_COMPARISON_STATUS,
+  gapDispositions: RECONSTRUCTION_GAP_DISPOSITION,
+});
+const setReconstructionMode = reconstructionController.setMode;
+const exportReconstruction = reconstructionController.exportProcess;
+const renderReconstructionView = reconstructionController.renderView;
 function renderArchitectureView() {
   const root = $("architecture-panel");
   const data = state.graph || {};
-  const snapshot = data.snapshot || {};
-  const runtime = data.runtime || {};
-  const counts = data.counts || {};
-  const integrity = data.integrity || {};
-  const layers = data.storageModel?.layers || [];
-  const relationships = data.storageModel?.relationships || [];
-  const tableSizes = Object.fromEntries((data.tables || []).map((item) => [item.table_name, Number(item.total_bytes || 0)]));
-  const tableLabels = {
-    snapshots: "Снимки анализа",
-    report_imports: "Журнал загрузок",
-    source_groups: "Контуры ФП",
-    services: "Сервисы",
-    models: "Модели данных",
-    model_fields: "Поля моделей",
-    model_identity_nodes: "Идентичности моделей",
-    model_identity_edges: "Связи идентичности",
-    contracts: "Контракты",
-    field_links: "Связи полей",
-    processes: "Процессы",
-    process_steps: "Шаги процессов",
-    process_relations: "Причинные связи",
-    evidence_refs: "Ссылки на доказательства",
-    artifacts: "Excel и другие артефакты",
-  };
-  const latestMigration = (data.migrations || []).at(-1)?.version || "—";
-  const tableRows = layers.flatMap((layer, layerIndex) => (layer.tables || []).map((table) => ({
-    layer: layer.title,
-    layerIndex,
-    table,
-    count: counts[table],
-    bytes: tableSizes[table],
-  })));
-  root.innerHTML = `
-    <header class="storage-console-head">
-      <div class="storage-console-title">
-        <div class="storage-breadcrumb"><span>Платформа данных</span><b>/</b><span>Архитектура</span></div>
-        <h2>Модель хранения lineage</h2>
-        <p>Версионированный снимок, нормализованный граф и доказательства анализа в едином контуре данных.</p>
-      </div>
-      <div class="storage-head-tools">
-        <div class="storage-export-actions" aria-label="Экспорт архитектуры">
-          <button class="btn" id="architecture-export-mermaid" type="button" title="Скачать редактируемую Mermaid-схему">Mermaid</button>
-          <button class="btn" id="architecture-export-drawio" type="button" title="Скачать схему для diagrams.net">draw.io</button>
-        </div>
-        <div class="storage-runtime">
-          <span class="storage-live"><i></i>Подключено</span>
-          <div><small>PostgreSQL</small><b>${esc(String(runtime.server_version || "").split(" ")[0] || "—")}</b></div>
-          <div><small>База</small><b>${esc(runtime.database_name || "—")}</b></div>
-          <div><small>Схема</small><b>ai_profiler</b></div>
-        </div>
-      </div>
-    </header>
-
-    <div class="storage-statline">
-      <div><span>Сервисы</span><strong>${fmt(counts.services)}</strong></div>
-      <div><span>Модели</span><strong>${fmt(counts.models)}</strong></div>
-      <div><span>Поля моделей</span><strong>${fmt(counts.model_fields)}</strong></div>
-      <div><span>Контракты</span><strong>${fmt(counts.contracts)}</strong></div>
-      <div><span>Шаги процессов</span><strong>${fmt(counts.process_steps)}</strong></div>
-      <div><span>Доказательства</span><strong>${fmt(counts.evidence_refs)}</strong></div>
-    </div>
-
-    <div class="storage-workbench">
-      <div class="storage-primary">
-        <section class="storage-block storage-architecture-map">
-          <header class="storage-block-head">
-            <div><span>Контур данных</span><h3>Поставка и чтение снимка</h3></div>
-            <p>Загрузка и публикация разделены. UI не читает файлы отчёта напрямую.</p>
-          </header>
-          <div class="storage-flow">
-            <div class="storage-endpoint source">
-              <small>Источник</small>
-              <strong>Отчёт профайлера</strong>
-              <span>JSON + Excel</span>
-            </div>
-            <div class="storage-flow-link"><b>01</b><span>Загрузка</span></div>
-            <div class="storage-loader">
-              <small>Ingestion</small>
-              <strong>Report Loader</strong>
-              <span>SHA-256 · проверка · транзакция</span>
-            </div>
-            <div class="storage-flow-link"><b>02</b><span>Commit</span></div>
-            <div class="storage-database">
-              <header><div><small>PostgreSQL</small><strong>${formatBytes(runtime.database_bytes)}</strong></div><span>${esc(snapshot.name || snapshot.snapshot_id || "—")}</span></header>
-              <div class="storage-domains">
-                ${layers.map((layer, index) => `
-                  <div class="storage-domain domain-${index + 1}">
-                    <b>${esc(layer.title)}</b>
-                    <span>${fmt((layer.tables || []).length)} таблиц · ${fmt((layer.tables || []).reduce((total, table) => total + Number(counts[table] || 0), 0))} записей</span>
-                  </div>
-                `).join("")}
-              </div>
-            </div>
-            <div class="storage-flow-link"><b>03</b><span>Read-only</span></div>
-            <div class="storage-endpoint target">
-              <small>Доступ</small>
-              <strong>Bun API</strong>
-              <span>UI · агенты · экспорт</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="storage-block storage-inventory">
-          <header class="storage-block-head">
-            <div><span>Физическая модель</span><h3>Таблицы и объём данных</h3></div>
-            <p>${fmt(tableRows.length)} предметных таблиц в четырёх слоях хранения.</p>
-          </header>
-          <div class="storage-table-wrap">
-            <table class="storage-table">
-              <thead><tr><th>Слой</th><th>Таблица</th><th>Назначение</th><th>Записей</th><th>Размер</th></tr></thead>
-              <tbody>${tableRows.map((row) => `
-                <tr>
-                  <td><span class="storage-layer-mark layer-${row.layerIndex + 1}">${String(row.layerIndex + 1).padStart(2, "0")}</span></td>
-                  <td><code>${esc(row.table)}</code></td>
-                  <td>${esc(tableLabels[row.table] || row.table)}</td>
-                  <td>${fmt(row.count)}</td>
-                  <td>${formatBytes(row.bytes)}</td>
-                </tr>
-              `).join("")}</tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <aside class="storage-aside">
-        <section class="storage-side-block">
-          <header><span>Состояние</span><b>Рабочий контур</b></header>
-          <dl class="storage-facts">
-            <div><dt>Снимок</dt><dd>${esc(snapshot.name || snapshot.snapshot_id || "—")}</dd></div>
-            <div><dt>Миграция</dt><dd>${esc(latestMigration)}</dd></div>
-            <div><dt>Импорт</dt><dd>${esc(data.latestImport?.imported_at ? new Date(data.latestImport.imported_at).toLocaleString("ru-RU") : "—")}</dd></div>
-            <div><dt>Исходный JSONB</dt><dd>${formatBytes(snapshot.document_bytes)}</dd></div>
-            <div><dt>Артефакты</dt><dd>${fmt(counts.artifacts)}</dd></div>
-          </dl>
-        </section>
-
-        <section class="storage-side-block">
-          <header><span>Целостность</span><b>Ограничения БД</b></header>
-          <div class="storage-constraint-grid">
-            <div><strong>${fmt(integrity.primary_keys)}</strong><span>PK</span></div>
-            <div><strong>${fmt(integrity.foreign_keys)}</strong><span>FK</span></div>
-            <div><strong>${fmt(integrity.indexes)}</strong><span>Индексы</span></div>
-            <div><strong>${fmt(counts.report_imports)}</strong><span>Загрузки</span></div>
-          </div>
-          <p>Составные ключи изолируют прогоны. Внешние ключи контролируют каталог, процессы и связи полей.</p>
-        </section>
-
-        <section class="storage-side-block storage-relationships">
-          <header><span>Граф</span><b>Ключевые отношения</b></header>
-          <div>${relationships.map(([source, target, cardinality]) => `
-            <span><i>${esc(tableLabels[source] || source)}</i><b>${esc(cardinality)}</b><i>${esc(tableLabels[target] || target)}</i></span>
-          `).join("")}</div>
-        </section>
-
-        <section class="storage-side-block storage-source">
-          <header><span>Происхождение</span><b>Контрольная сумма</b></header>
-          <dl class="storage-facts">
-            <div><dt>Snapshot ID</dt><dd><code>${esc(snapshot.snapshot_id || "—")}</code></dd></div>
-            <div><dt>SHA-256</dt><dd><code>${esc(snapshot.source_hash || "—")}</code></dd></div>
-            <div><dt>Источник</dt><dd><code>${esc(snapshot.source_file || "—")}</code></dd></div>
-          </dl>
-        </section>
-      </aside>
-    </div>`;
-  $("architecture-export-mermaid")?.addEventListener("click", () => exportArchitecture("mermaid", data, tableLabels));
-  $("architecture-export-drawio")?.addEventListener("click", () => exportArchitecture("drawio", data, tableLabels));
+  const renderer = window.AIProfilerArchitectureView;
+  if (!renderer) return showError(new Error("Модуль экрана архитектуры не загружен"));
+  const rendered = renderer.render(data, { esc, fmt, formatBytes });
+  root.innerHTML = rendered.html;
+  $("architecture-export-mermaid")?.addEventListener("click", () => exportArchitecture("mermaid", data, rendered.tableLabels));
+  $("architecture-export-drawio")?.addEventListener("click", () => exportArchitecture("drawio", data, rendered.tableLabels));
 }
 
 function exportArchitecture(kind, data, tableLabels) {
   const exporter = window.AIProfilerArchitectureExport;
   if (!exporter) return showError(new Error("Модуль экспорта архитектуры не загружен"));
-  const snapshotName = String(data.snapshot?.name || data.snapshot?.snapshot_id || "snapshot");
-  const safeName = snapshotName.replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]+/g, "_");
+  const safeName = window.AIProfilerArchitectureView?.fileStem(data) || "snapshot";
   if (kind === "drawio") {
     return download(`ai_profiler_architecture_${safeName}.drawio`, new Blob([exporter.buildDrawio(data, tableLabels)], { type: "application/xml;charset=utf-8" }));
   }
@@ -4775,10 +3058,19 @@ async function loadSnapshot(snapshotId) {
   const requestedStep = Number(params.get("step") || 0);
   const requestedMapStageRaw = params.get("mapStage");
   const requestedMapStage = requestedMapStageRaw == null ? null : Number(requestedMapStageRaw);
+  const requestedMapView = params.get("mapView");
+  const requestedMapFlow = params.get("mapFlow");
   const directProcess = (state.graph?.processes || []).find((process) => process.processId === requestedProcess);
   state.sequence.processId = directProcess?.processId || "";
   state.sequence.processMembers = directProcess ? new Set(directProcess.memberServices || []) : null;
-  state.sequence.selectedStage = directProcess && Number.isFinite(requestedMapStage) ? requestedMapStage : null;
+  state.sequence.mapStage = directProcess && Number.isFinite(requestedMapStage) ? requestedMapStage : null;
+  state.sequence.mapView = ["overview", "stage", "diagnostic"].includes(requestedMapView)
+    ? requestedMapView
+    : (requestedStep ? "diagnostic" : "overview");
+  state.sequence.mapFlow = ["all", "main", "conditional", "async", "exception"].includes(requestedMapFlow)
+    ? requestedMapFlow
+    : "all";
+  state.sequence.selectedStage = state.sequence.mapView === "stage" ? state.sequence.mapStage : null;
   const directCalls = directProcess && requestedStep
     ? buildSequenceData(1, { applyFilters: false }).calls
     : [];
@@ -4792,7 +3084,7 @@ async function loadSnapshot(snapshotId) {
   $("api-state").textContent = "online";
   setView(state.view);
   if (state.view === "sequence" && state.sequence.diagramMode === "process" && directProcess) {
-    requestAnimationFrame(fitSequence);
+    requestAnimationFrame(() => fitSequence({ readable: true }));
   }
 }
 
@@ -4823,12 +3115,6 @@ function bindUi() {
   $("inspector-tab-detail").onclick = () => setInspectorTab("detail");
   $("inspector-tab-agent").onclick = () => setInspectorTab("agent");
   $("inspector-collapse").onclick = () => setInspectorCollapsed(!state.agent.collapsed);
-  document.querySelectorAll("[data-agent-mode]").forEach((button) => {
-    button.onclick = () => {
-      state.agent.mode = button.dataset.agentMode === "llm" ? "llm" : "facts";
-      document.querySelectorAll("[data-agent-mode]").forEach((item) => item.classList.toggle("active", item === button));
-    };
-  });
   document.querySelectorAll("[data-agent-question]").forEach((button) => {
     button.onclick = () => askProcessAgent(button.dataset.agentQuestion);
   });

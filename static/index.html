@@ -4,8 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI Profiler</title>
-  <link rel="stylesheet" href="/static/styles.css?v=process-flow-v6" />
-  <link rel="stylesheet" href="/static/product.css?v=product-v2" />
+  <link rel="stylesheet" href="/static/styles.css?v=core-v1" />
+  <link rel="stylesheet" href="/static/process_map.css?v=process-map-v1" />
+  <link rel="stylesheet" href="/static/agent_panel.css?v=agent-panel-v1" />
+  <link rel="stylesheet" href="/static/reconstruction.css?v=reconstruction-v1" />
+  <link rel="stylesheet" href="/static/product.css?v=product-v6" />
 </head>
 <body>
   <aside class="rail">
@@ -85,16 +88,16 @@
     <section class="view" id="view-sequence">
       <div class="panel sequence-panel">
         <div class="sequence-toolbar">
-          <div>
+          <div class="sequence-heading">
             <h2 id="sequence-title">Сиквенс межсервисных вызовов</h2>
-            <p id="sequence-summary">Загрузка...</p>
+            <div class="sequence-summary" id="sequence-summary">Загрузка...</div>
           </div>
           <div class="sequence-actions">
             <div class="diagram-mode-switch" role="group" aria-label="Представление процесса">
               <button class="diagram-mode active" id="diagram-mode-sequence" type="button">Сиквенс</button>
               <button class="diagram-mode" id="diagram-mode-process" type="button">Карта процесса</button>
             </div>
-            <button class="mini-btn agent-trigger" id="seq-agent" type="button" title="Задать вопрос по фактам выбранного процесса">ИИ-ассистент</button>
+              <button class="mini-btn agent-trigger" id="seq-agent" type="button" title="Задать GigaChat вопрос по выбранному процессу">ИИ-ассистент</button>
             <select id="sequence-scope" class="scope-select demo-hide" aria-label="Контур анализа">
               <option value="all">Все найденные связи</option>
               <option value="cross">Только межФП</option>
@@ -125,6 +128,7 @@
               </div>
             </details>
           </div>
+          <div class="sequence-context" id="sequence-context"></div>
         </div>
         <div class="sequence-quality" id="sequence-quality"></div>
         <div class="sequence-layout">
@@ -141,10 +145,6 @@
                 <span class="agent-mark">AI</span>
                 <div><b>Ассистент по lineage</b><small id="agent-context">Выберите процесс или связь</small></div>
               </header>
-              <div class="agent-mode" role="group" aria-label="Режим ответа">
-                <button class="active" type="button" data-agent-mode="facts">По фактам</button>
-                <button type="button" data-agent-mode="llm">GigaChat</button>
-              </div>
               <div class="agent-quick" aria-label="Быстрые вопросы">
                 <button type="button" data-agent-question="Что делает этот процесс и где его границы?">Что делает процесс?</button>
                 <button type="button" data-agent-question="Почему выбранный переход находится в этом месте процесса?">Почему этот переход?</button>
@@ -236,11 +236,21 @@
   </main>
 
   <script src="/static/sequence.js?v=process-ir-1"></script>
-  <script src="/static/process_map.js?v=process-flow-v6"></script>
-  <script src="/static/process_map_export.js?v=process-flow-v6"></script>
+  <script src="/static/labels.js?v=labels-1"></script>
+  <script src="/static/process_map.js?v=process-flow-v12"></script>
+  <script src="/static/process_map_presentation.js?v=process-flow-v12"></script>
+  <script src="/static/process_map_export.js?v=process-flow-v12"></script>
+  <script src="/static/process_map_controller.js?v=process-map-controller-1"></script>
   <script src="/static/architecture_export.js?v=architecture-export-1"></script>
+  <script src="/static/architecture_state.js?v=architecture-state-1"></script>
+  <script src="/static/architecture_view.js?v=architecture-view-1"></script>
   <script src="/static/sequence_export.js?v=viewer-2"></script>
   <script src="/static/reconstruction_export.js?v=reconstruction-export-1"></script>
-  <script src="/static/app.js?v=process-flow-v6"></script>
+  <script src="/static/presentation.js?v=presentation-1"></script>
+  <script src="/static/journey_paths.js?v=journey-paths-1"></script>
+  <script src="/static/mapping_view.js?v=mapping-view-1"></script>
+  <script src="/static/agent_panel.js?v=agent-panel-1"></script>
+  <script src="/static/reconstruction_controller.js?v=reconstruction-controller-1"></script>
+  <script src="/static/app.js?v=process-flow-v15"></script>
 </body>
 </html>
