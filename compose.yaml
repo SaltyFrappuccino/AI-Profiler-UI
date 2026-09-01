@@ -1,47 +1,82 @@
+name: ai-profiler-ui
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ai_profiler
-      POSTGRES_USER: ai_profiler
-      POSTGRES_PASSWORD: ai_profiler
+      POSTGRES_USER: ai_profiler_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:-ai_profiler_owner}
+      POSTGRES_LOADER_PASSWORD: ${POSTGRES_LOADER_PASSWORD:-ai_profiler_loader}
+      POSTGRES_UI_PASSWORD: ${POSTGRES_UI_PASSWORD:-ai_profiler_ui}
     ports:
-      - "54329:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-54329}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ai_profiler -d ai_profiler"]
+      test: ["CMD-SHELL", "pg_isready -U ai_profiler_owner -d ai_profiler"]
       interval: 2s
       timeout: 3s
       retries: 30
     volumes:
       - ai-profiler-postgres:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+
+  migrator:
+    build: .
+    command: ["bun", "run", "db:migrate"]
+    environment:
+      DATABASE_URL: postgres://ai_profiler_loader:${POSTGRES_LOADER_PASSWORD:-ai_profiler_loader}@postgres:5432/ai_profiler
+      DATABASE_APPLICATION_NAME: ai-profiler-migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    security_opt:
+      - no-new-privileges:true
 
   report-loader:
     build: .
     command: ["bun", "run", "import-report"]
     environment:
-      DATABASE_URL: postgres://ai_profiler:ai_profiler@postgres:5432/ai_profiler
+      DATABASE_URL: postgres://ai_profiler_loader:${POSTGRES_LOADER_PASSWORD:-ai_profiler_loader}@postgres:5432/ai_profiler
+      DATABASE_APPLICATION_NAME: ai-profiler-report-loader
       REPORT_PATH: ${REPORT_PATH:-reports_system/three_fp_v39/system_lineage.json}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     volumes:
       - ./reports_system:/app/reports_system:ro
+    init: true
+    security_opt:
+      - no-new-privileges:true
 
   ui:
     build: .
     environment:
-      DATABASE_URL: postgres://ai_profiler:ai_profiler@postgres:5432/ai_profiler
+      DATABASE_URL: postgres://ai_profiler_ui:${POSTGRES_UI_PASSWORD:-ai_profiler_ui}@postgres:5432/ai_profiler
+      DATABASE_APPLICATION_NAME: ai-profiler-ui
       UI_HOST: 0.0.0.0
-      UI_PORT: 8093
+      UI_PORT: "8093"
     ports:
-      - "8093:8093"
+      - "127.0.0.1:${UI_PORT:-8093}:8093"
     depends_on:
       report-loader:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     volumes:
       - ./reports_system:/app/reports_system:ro
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:8093/api/health/ready');process.exit(r.ok?0:1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
 volumes:
   ai-profiler-postgres:

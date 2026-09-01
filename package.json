@@ -2,16 +2,21 @@
   "name": "ai-profiler-ui",
   "version": "1.0.0",
   "private": true,
-  "description": "Unified lineage UI for AI Profiler",
+  "packageManager": "bun@1.2.23",
+  "description": "PostgreSQL-backed lineage UI for AI Profiler",
   "scripts": {
     "start": "bun run server.ts",
     "dev": "bun --watch run server.ts",
-    "check": "bun build server.ts --target=bun --outdir=.bun-check/server && bun build static/app.js --target=browser --outdir=.bun-check/browser",
+    "check": "bun build server.ts --target=bun --outdir=.bun-check/server && bun build tools/import-report.ts db/migrate.ts --target=bun --outdir=.bun-check/tools && bun build static/app.js static/sequence.js static/labels.js static/process_map.js static/process_map_presentation.js static/process_map_export.js static/process_map_controller.js static/architecture_export.js static/architecture_state.js static/architecture_view.js static/sequence_export.js static/reconstruction_export.js static/presentation.js static/journey_paths.js static/mapping_view.js static/agent_panel.js static/reconstruction_controller.js --target=browser --outdir=.bun-check/browser",
     "test": "bun test",
     "db:migrate": "bun run db/migrate.ts",
     "import-report": "bun run tools/import-report.ts",
-    "sandbox:up": "docker compose up --build",
-    "sandbox:down": "docker compose down"
+    "sandbox:up": "docker compose up --build --detach --wait",
+    "sandbox:status": "docker compose ps",
+    "sandbox:logs": "docker compose logs --follow ui",
+    "sandbox:down": "docker compose down --remove-orphans",
+    "sandbox:reset": "docker compose down --volumes --remove-orphans",
+    "sandbox:import": "docker compose run --rm report-loader"
   },
   "dependencies": {
     "postgres": "^3.4.9"

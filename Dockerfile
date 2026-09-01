@@ -6,6 +6,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 COPY server.ts api.ts ./
+COPY api ./api
 COPY db ./db
 COPY tools ./tools
 COPY static ./static
